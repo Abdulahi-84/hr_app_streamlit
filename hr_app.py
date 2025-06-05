@@ -8,13 +8,12 @@ from fpdf import FPDF
 import base64
 
 # --- Configuration & Paths ---
-# Ensure this path is correct for your system
-ICON_BASE_DIR = r"C:\Users\ADMIN\Downloads\Project" 
+# For deployment, assume images are in the same directory as the app
 LOGO_FILE_NAME = "polaris_digitech_logo.png"
-LOGO_PATH = os.path.join(ICON_BASE_DIR, LOGO_FILE_NAME)
+LOGO_PATH = LOGO_FILE_NAME # Now directly refers to the file in the same directory
 
-ABDULAHI_IMAGE_FILE_NAME = "abdulahi_image.png" # Assuming this image is in the same directory
-ABDULAHI_IMAGE_PATH = os.path.join(ICON_BASE_DIR, ABDULAHI_IMAGE_FILE_NAME)
+ABDULAHI_IMAGE_FILE_NAME = "abdulahi_image.png"
+ABDULAHI_IMAGE_PATH = ABDULAHI_IMAGE_FILE_NAME # Now directly refers to the file in the same directory
 
 # --- Define Approval Route Emails (For Simulated Notifications) ---
 APPROVAL_EMAILS = {
