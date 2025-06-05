@@ -359,7 +359,7 @@ def display_dashboard():
 def generate_leave_pdf(leave_request_data, user_profile):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Helvetica", size=12)
 
     pdf.set_text_color(30, 144, 255)
     pdf.set_font("Arial", 'B', 16)
