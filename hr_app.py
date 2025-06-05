@@ -362,23 +362,23 @@ def generate_leave_pdf(leave_request_data, user_profile):
     pdf.set_font("Helvetica", size=12)
 
     pdf.set_text_color(30, 144, 255)
-    pdf.set_font("Arial", 'B', 16)
+    pdf.set_font("Helvetica", 'B', 16)
     pdf.cell(0, 10, "Polaris Digitech - Leave Application", align="C", ln=True)
     pdf.set_text_color(0, 0, 0)
 
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, "Employee Details:", ln=True)
-    pdf.set_font("Arial", '', 10)
+    pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 7, f"Name: {user_profile.get('name', 'N/A')}", ln=True)
     pdf.cell(0, 7, f"Department: {user_profile.get('department', 'N/A')}", ln=True)
     pdf.cell(0, 7, f"Email: {user_profile.get('email_address', 'N/A')}", ln=True)
     pdf.cell(0, 7, f"Phone: {user_profile.get('phone_number', 'N/A')}", ln=True)
     pdf.ln(5)
 
-    pdf.set_font("Arial", 'B', 12)
+    pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(0, 10, "Leave Request Details:", ln=True)
-    pdf.set_font("Arial", '', 10)
+    pdf.set_font("Helvetica", '', 10)
     
     for key, value in leave_request_data.items():
         if key in ["start_date", "end_date", "submission_date"] and value:
