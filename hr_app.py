@@ -12,12 +12,9 @@ import base64
 LOGO_FILE_NAME = "polaris_digitech_logo.png"
 LOGO_PATH = LOGO_FILE_NAME # Now directly refers to the file in the same directory
 
-ABDULAHI_IMAGE_FILE_NAME = "abdulahi_image.png"
-ABDULAHI_IMAGE_PATH = ABDULAHI_IMAGE_FILE_NAME # Now directly refers to the file in the same directory
-
 # --- Define Approval Route Emails (For Simulated Notifications) ---
 APPROVAL_EMAILS = {
-    "Admin Manager": "admin.manager@example.com",
+    "Admin Manager": "abdul_bolaji@yahoo.com",
     "Finance Manager": "finance.manager@example.com",
     "HR Manager": "hr.manager@example.com",
     "Managing Director": "md@example.com"
