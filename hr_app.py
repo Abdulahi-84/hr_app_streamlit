@@ -130,13 +130,6 @@ def display_dashboard():
     with col_logo:
         display_logo()
 
-    with col_user_image:
-        if os.path.exists(ABDULAHI_IMAGE_PATH):
-            st.image(ABDULAHI_IMAGE_PATH, width=100)
-        else:
-            st.warning(f"User image not found at: {ABDULAHI_IMAGE_PATH}")
-            st.info("Place 'abdulahi_image.png' in your 'Project' folder for it to appear.")
-
     st.title("POLARIS DIGITECH STAFF PORTAL - Dashboard")
     st.markdown(f"## Welcome, {st.session_state.username}")
     st.write(f"Your ID: GID/00152")
