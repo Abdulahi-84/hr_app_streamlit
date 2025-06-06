@@ -4,31 +4,17 @@ from datetime import datetime, timedelta
 import os
 import pandas as pd
 import plotly.express as px
-from fpdf import FPDF
+from fpdf2 import FPDF # Correct import for fpdf2
 import base64
-import bcrypt # For password hashing
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # --- Configuration & Paths ---
 # For deployment, assume images are in the same directory as the app
 LOGO_FILE_NAME = "polaris_digitech_logo.png"
 LOGO_PATH = LOGO_FILE_NAME # Now directly refers to the file in the same directory
 
-ABDULAHI_IMAGE_FILE_NAME = "abdulahi_image.png"
-ABDULAHI_IMAGE_PATH = ABDULAHI_IMAGE_FILE_NAME
-
-# --- Data Files ---
-USERS_FILE = "users.json" # File for all user accounts and their specific data (profile, goals, appraisal)
-LEAVE_REQUESTS_FILE = "leave_requests.json"
-OPEX_CAPEX_REQUESTS_FILE = "opex_capex_requests.json"
-
-
 # --- Define Approval Route Emails (For Simulated Notifications) ---
-# NOTE: For actual email sending, you'd need an email server and credentials (use Streamlit secrets for credentials!)
 APPROVAL_EMAILS = {
-    "Admin Manager": "admin.manager@example.com",
+    "Admin Manager": "abdul_bolaji@yahoo.com",
     "Finance Manager": "finance.manager@example.com",
     "HR Manager": "hr.manager@example.com",
     "Managing Director": "md@example.com"
@@ -40,1079 +26,1130 @@ BENEFICIARIES_DATA = {
     "Bestway Engineering Services Ltd": {"Account Name": "Benjamin", "Account No": "1234567890", "Bank": "GTB"},
     "Alpha Link Technical Services": {"Account Name": "Oladele", "Account No": "2345678900", "Bank": "Access Bank"},
     "AFLAC COM SPECs": {"Account Name": "Fasco", "Account No": "1234567890", "Bank": "Opay"},
-    "Emmafem Resources Nig. Ent.": {"Account Name": "Alimi", "Account No": "0987654321", "Bank": "Zenith Bank"},
-    "Topmost Group": {"Account Name": "Ola", "Account No": "3456789012", "Bank": "UBA"},
-    "Wella Services": {"Account Name": "Adeola", "Account No": "4567890123", "Bank": "First Bank"},
-    "Zuma Construction": {"Account Name": "Musa", "Account No": "5678901234", "Bank": "Access Bank"},
-    "Prime Innovations": {"Account Name": "Chidi", "Account No": "6789012345", "Bank": "GTB"},
-    "Global Logistics Inc.": {"Account Name": "Fatima", "Account No": "7890123456", "Bank": "Zenith Bank"},
-    "Tech Solutions Ltd.": {"Account Name": "David", "Account No": "8901234567", "Bank": "UBA"}
+    "Emmafem Resources Nig. Ent.": {"Account Name": "Radius", "Account No": "2345678901", "Bank": "UBA"},
+    "Neptune Global Services": {"Account Name": "Folashade", "Account No": "12345678911", "Bank": "Union Bank"},
+    "Other (Manually Enter Details)": {"Account Name": "", "Account No": "", "Bank": ""} # Option for manual entry
 }
+# Get beneficiary names for the selectbox
+BENEFICIARY_NAMES = list(BENEFICIARIES_DATA.keys())
 
-
-# --- Utility Functions ---
-
-def hash_password(password):
-    """Hashes a password using bcrypt."""
-    # Generate a salt and hash the password
-    # 12 is a good cost factor; higher is slower but more secure
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
-
-def check_password(password, hashed_password):
-    """Checks if a password matches a hashed password."""
-    return bcrypt.checkpw(password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-def load_data(file_path, default_value):
-    """Loads JSON data from a file, returning default_value if file not found or empty."""
-    if not os.path.exists(file_path) or os.stat(file_path).st_size == 0:
+# --- Data Loading/Saving Functions ---
+def load_data(filename, default_value=None):
+    if default_value is None:
+        default_value = []
+    try:
+        if os.path.exists(filename) and os.path.getsize(filename) > 0:
+            with open(filename, "r") as file:
+                return json.load(file)
         return default_value
-    with open(file_path, 'r') as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return default_value
+    except json.JSONDecodeError:
+        st.warning(f"Error decoding JSON from {filename}. File might be corrupted or empty. Resetting data.")
+        return default_value
+    except FileNotFoundError:
+        return default_value
 
-def save_data(data, file_path):
-    """Saves data to a JSON file."""
-    with open(file_path, 'w') as f:
-        json.dump(data, f, indent=4)
+def save_data(data, filename):
+    with open(filename, "w") as file:
+        json.dump(data, file, indent=4)
 
-# --- User Management (Centralized in users.json) ---
+def save_uploaded_file(uploaded_file, destination_folder="uploaded_documents"):
+    if uploaded_file is not None:
+        if not os.path.exists(destination_folder):
+            os.makedirs(destination_folder)
+            
+        file_path = os.path.join(destination_folder, uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return file_path
+    return None
 
-def initialize_users_data():
-    """Initializes the users.json file with default accounts if it doesn't exist.
-    Each user now contains their profile, goals, and appraisal data directly.
-    """
-    if not os.path.exists(USERS_FILE) or os.stat(USERS_FILE).st_size == 0:
-        st.info("No users file found. Initializing with default admin and manager accounts.")
-        default_users = [
-            {
-                "username": "admin",
-                "password_hash": hash_password("admin_password_123"), # Change this for production!
-                "role": "Admin Manager",
-                "employee_id": "EMP001",
-                "profile": {
-                    "full_name": "Admin User",
-                    "employee_id": "EMP001",
-                    "department": "Administration",
-                    "position": "Admin Manager",
-                    "email": "admin@example.com",
-                    "phone": "08011111111",
-                    "address": "123 Admin St, Lagos",
-                    "emergency_contact": "Admin Emergency, 09011111111"
-                },
-                "performance_goals": [],
-                "current_appraisal": {}
-            },
-            {
-                "username": "finance",
-                "password_hash": hash_password("finance_password_123"), # Change this for production!
-                "role": "Finance Manager",
-                "employee_id": "EMP002",
-                "profile": {
-                    "full_name": "Finance User",
-                    "employee_id": "EMP002",
-                    "department": "Finance",
-                    "position": "Finance Manager",
-                    "email": "finance@example.com",
-                    "phone": "08022222222",
-                    "address": "456 Finance Ave, Lagos",
-                    "emergency_contact": "Finance Emergency, 09022222222"
-                },
-                "performance_goals": [],
-                "current_appraisal": {}
-            },
-            {
-                "username": "hr",
-                "password_hash": hash_password("hr_password_123"), # Change this for production!
-                "role": "HR Manager",
-                "employee_id": "EMP003",
-                "profile": {
-                    "full_name": "HR User",
-                    "employee_id": "EMP003",
-                    "department": "Human Resources",
-                    "position": "HR Manager",
-                    "email": "hr@example.com",
-                    "phone": "08033333333",
-                    "address": "789 HR Rd, Lagos",
-                    "emergency_contact": "HR Emergency, 09033333333"
-                },
-                "performance_goals": [],
-                "current_appraisal": {}
-            },
-            {
-                "username": "md",
-                "password_hash": hash_password("md_password_123"), # Change this for production!
-                "role": "Managing Director",
-                "employee_id": "EMP004",
-                "profile": {
-                    "full_name": "Managing Director User",
-                    "employee_id": "EMP004",
-                    "department": "Executive",
-                    "position": "Managing Director",
-                    "email": "md@example.com",
-                    "phone": "08044444444",
-                    "address": "101 MD Blvd, Lagos",
-                    "emergency_contact": "MD Emergency, 09044444444"
-                },
-                "performance_goals": [],
-                "current_appraisal": {}
-            }
-        ]
-        save_data(default_users, USERS_FILE)
-        st.success("Initial users created.")
+# --- Session State Initialization ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'username' not in st.session_state:
+    st.session_state.username = ""
+if 'leave_requests' not in st.session_state:
+    st.session_state.leave_requests = load_data("leave_requests.json", [])
+if 'opex_capex_requests' not in st.session_state:
+    st.session_state.opex_capex_requests = load_data("opex_capex_requests.json", [])
+if 'user_profile' not in st.session_state:
+    default_profile = {
+        "name": "",
+        "education_background": "",
+        "professional_experience": "",
+        "address": "",
+        "phone_number": "",
+        "email_address": "",
+        "department": "Admin",
+        "training_attended": []
+    }
+    st.session_state.user_profile = load_data("user_profile.json", default_profile)
+if 'performance_goals' not in st.session_state:
+    st.session_state.performance_goals = load_data("performance_goals.json", [])
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "login"
+if 'edit_goal_index' not in st.session_state:
+    st.session_state.edit_goal_index = None # To track which goal is being edited
+if 'current_appraisal' not in st.session_state:
+    st.session_state.current_appraisal = load_data("current_appraisal.json", {
+        "appraisal_period": "",
+        "goals": [],
+        "overall_supervisor_comment": "",
+        "recommendation": ""
+    })
+
+# --- Common UI Elements ---
+def display_logo():
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=150)
     else:
-        st.info("Users file found. Loading existing users.")
+        st.error(f"Company logo not found at: {LOGO_PATH}")
+        st.warning(f"Please ensure '{LOGO_FILE_NAME}' is in the same directory as the app.")
 
+# --- Login Form ---
+def login_form():
+    st.title("Polaris Digitech Staff Portal - Login")
+    username = st.text_input("User ID", key="login_username")
+    password = st.text_input("Password", type="password", key="login_password")
 
-def get_user_by_username(username):
-    users = load_data(USERS_FILE, [])
-    for user in users:
-        if user["username"] == username:
-            return user
-    return None
-
-def get_user_by_employee_id(employee_id):
-    users = load_data(USERS_FILE, [])
-    for user in users:
-        if user["employee_id"] == employee_id:
-            return user
-    return None
-
-def update_user_data(updated_user):
-    """Updates a user's data in the users.json file."""
-    all_users = load_data(USERS_FILE, [])
-    for i, user in enumerate(all_users):
-        if user["username"] == updated_user["username"]:
-            all_users[i] = updated_user
-            break
-    save_data(all_users, USERS_FILE)
-
-# --- Email Simulation Function ---
-def send_email_notification(to_email, subject, body):
-    """Simulates sending an email notification."""
-    # In a real app, you would use smtplib to connect to an SMTP server
-    # and send the email. For this simulation, we just print the details.
-    st.info(f"--- SIMULATING EMAIL SEND ---")
-    st.info(f"To: {to_email}")
-    st.info(f"Subject: {subject}")
-    st.info(f"Body: {body}")
-    st.info(f"--- EMAIL SIMULATION END ---")
-
-    # Example of actual email sending (requires configuration and credentials)
-    # sender_email = "your_email@example.com"
-    # sender_password = os.getenv("EMAIL_PASSWORD") # IMPORTANT: Use environment variable for password!
-    # if not sender_password:
-    #     st.warning("Email password not set in environment variables. Email notification failed.")
-    #     return
-
-    # try:
-    #     msg = MIMEMultipart()
-    #     msg['From'] = sender_email
-    #     msg['To'] = to_email
-    #     msg['Subject'] = subject
-    #     msg.attach(MIMEText(body, 'plain'))
-
-    #     server = smtplib.SMTP_SSL('smtp.gmail.com', 465) # Example for Gmail
-    #     server.login(sender_email, sender_password)
-    #     server.send_message(msg)
-    #     server.quit()
-    #     st.success(f"Notification email sent to {to_email}")
-    # except Exception as e:
-    #     st.error(f"Failed to send email notification: {e}")
-
-
-# --- Authentication & Pages ---
-
-def login_page():
-    st.sidebar.image(LOGO_PATH, width=200)
-    st.title("Polaris Digitech HR System")
-
-    # State to toggle between Login and Sign Up forms
-    if 'show_signup' not in st.session_state:
-        st.session_state.show_signup = False
-
-    col1, col2 = st.columns([1,1])
-
-    with col1:
-        st.header("Login")
-        with st.form("login_form"):
-            username = st.text_input("Username").strip()
-            password = st.text_input("Password", type="password")
-            login_button = st.form_submit_button("Login")
-
-            if login_button:
-                user = get_user_by_username(username)
-                if user and check_password(password, user["password_hash"]):
-                    st.session_state.logged_in = True
-                    st.session_state.username = user["username"]
-                    st.session_state.role = user["role"]
-                    st.session_state.user_profile = user # Store the entire user object
-                    st.session_state.current_page = "dashboard" # Default page after login
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
-
-    with col2:
-        st.header("New User?")
-        st.write("Register to access the HR system.")
-        if st.button("Sign Up Now"):
-            st.session_state.show_signup = True
+    if st.button("Login"):
+        if username == "abdul_bolaji@yahoo.com" and password == "Polaris123":
+            st.session_state.logged_in = True
+            st.session_state.username = "ABDULLAHI IBRAHIM" # Matches the username in the profile image
+            if not st.session_state.user_profile.get("name"):
+                st.session_state.user_profile["name"] = st.session_state.username
+            if not st.session_state.user_profile.get("email_address"):
+                st.session_state.user_profile["email_address"] = username
+            save_data(st.session_state.user_profile, "user_profile.json")
+            st.success("Logged in successfully!")
+            st.session_state.current_page = "dashboard"
             st.rerun()
+        else:
+            st.error("Invalid credentials")
 
-    if st.session_state.show_signup:
-        st.markdown("---")
-        st.header("Sign Up")
-        with st.form("signup_form"):
-            new_username = st.text_input("Choose Username").strip()
-            new_password = st.text_input("Choose Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            new_employee_id = st.text_input("Employee ID").strip() # Unique ID for employees
-            # You might want to limit roles for sign-up or have admin approval
-            new_role = st.selectbox("Select Role", ["Employee"]) # Only employee can sign up
-
-            signup_button = st.form_submit_button("Register")
-
-            if signup_button:
-                if not new_username or not new_password or not confirm_password or not new_employee_id:
-                    st.error("All fields are required.")
-                elif new_password != confirm_password:
-                    st.error("Passwords do not match.")
-                elif get_user_by_username(new_username):
-                    st.error("Username already exists. Please choose a different one.")
-                elif get_user_by_employee_id(new_employee_id):
-                    st.error("Employee ID already registered. Please check or contact admin.")
-                else:
-                    hashed_new_password = hash_password(new_password)
-                    all_users = load_data(USERS_FILE, [])
-
-                    new_user_data = {
-                        "username": new_username,
-                        "password_hash": hashed_new_password,
-                        "role": new_role,
-                        "employee_id": new_employee_id,
-                        "profile": { # Initial profile for new user
-                            "full_name": "", # User can update this later
-                            "employee_id": new_employee_id,
-                            "department": "",
-                            "position": new_role, # Default position same as role for simplicity
-                            "email": "",
-                            "phone": "",
-                            "address": "",
-                            "emergency_contact": ""
-                        },
-                        "performance_goals": [],
-                        "current_appraisal": {}
-                    }
-                    all_users.append(new_user_data)
-                    save_data(all_users, USERS_FILE)
-                    st.success("Registration successful! You can now log in.")
-                    st.session_state.show_signup = False # Go back to login form
-                    st.rerun()
-
-# --- Dashboard Functionality ---
+# --- Dashboard Display (UI Interactive) ---
 def display_dashboard():
-    st.subheader(f"Welcome, {st.session_state.username}!")
-    st.markdown("### HR System Dashboard")
+    col_logo, col_spacer, col_user_image = st.columns([0.2, 0.6, 0.2])
 
-    # Assuming you have a way to filter data specific to this user's department/role
-    # For now, let's display some general HR stats or user-specific overview
+    with col_logo:
+        display_logo()
 
-    if st.session_state.role == "Admin Manager":
-        st.success("You have Admin Manager access.")
-        # Display admin-specific dashboard elements
-        all_leave_requests = load_data(LEAVE_REQUESTS_FILE, [])
-        all_opex_capex_requests = load_data(OPEX_CAPEX_REQUESTS_FILE, [])
-        all_users = load_data(USERS_FILE, [])
+    st.title("POLARIS DIGITECH STAFF PORTAL - Dashboard")
+    st.markdown(f"## Welcome, {st.session_state.username}")
+    st.write(f"Your ID: GID/00152")
+    st.write(f"Work Anniversary: September 01")
 
-        st.markdown("#### Overview Statistics")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Employees", len(all_users))
-        with col2:
-            st.metric("Pending Leave Requests", len([r for r in all_leave_requests if r['status'] == 'Pending']))
-        with col3:
-            st.metric("Pending OPEX/CAPEX Requests", len([r for r in all_opex_capex_requests if r['status'] == 'Pending']))
+    st.markdown("---")
 
-        # Example: Employee Distribution by Department (requires 'profile' data to be filled)
-        if all_users:
-            profiles = [u['profile'] for u in all_users if 'profile' in u and u['profile'].get('department')]
-            if profiles:
-                profile_df = pd.DataFrame(profiles)
-                dept_counts = profile_df['department'].value_counts().reset_index()
-                dept_counts.columns = ['Department', 'Count']
-                fig = px.pie(dept_counts, values='Count', names='Department', title='Employee Distribution by Department')
-                st.plotly_chart(fig, use_container_width=True)
+    with st.expander("My Profile Details (Click to expand/collapse)", expanded=True):
+        with st.form("profile_edit_form_dashboard"):
+            st.subheader("Personal Details")
+            name = st.text_input("Full Name", value=st.session_state.user_profile.get("name", ""), key="profile_name")
+            address = st.text_input("Address", value=st.session_state.user_profile.get("address", ""), key="profile_address")
+            phone = st.text_input("Phone Number", value=st.session_state.user_profile.get("phone_number", ""), key="profile_phone")
+            email = st.text_input("Email Address", value=st.session_state.user_profile.get("email_address", ""), disabled=True, help="Email is usually linked to login and cannot be changed here.", key="profile_email")
+            
+            department_options = ["Admin", "Finance", "HR", "IT", "Marketing", "Operations", "Sales", "Other"]
+            current_dept = st.session_state.user_profile.get("department", "Admin")
+            current_dept_index = department_options.index(current_dept) if current_dept in department_options else 0
+            department = st.selectbox("Department", options=department_options, index=current_dept_index, key="profile_department")
 
-    elif st.session_state.role == "Finance Manager":
-        st.success("You have Finance Manager access.")
-        # Display finance-specific dashboard elements
-        opex_capex_requests = load_data(OPEX_CAPEX_REQUESTS_FILE, [])
-        st.markdown("#### OPEX/CAPEX Request Summary")
-        if opex_capex_requests:
-            df_opex_capex = pd.DataFrame(opex_capex_requests)
-            status_counts = df_opex_capex['status'].value_counts().reset_index()
-            status_counts.columns = ['Status', 'Count']
-            fig = px.bar(status_counts, x='Status', y='Count', title='OPEX/CAPEX Request Status')
-            st.plotly_chart(fig, use_container_width=True)
+            st.subheader("Professional Background")
+            education = st.text_area("Education Background", value=st.session_state.user_profile.get("education_background", ""), height=100, key="profile_education")
+            experience = st.text_area("Professional Experience", value=st.session_state.user_profile.get("professional_experience", ""), height=150, key="profile_experience")
+
+            save_profile_button = st.form_submit_button("Save Profile Details")
+
+            if save_profile_button:
+                st.session_state.user_profile.update({
+                    "name": name,
+                    "education_background": education,
+                    "professional_experience": experience,
+                    "address": address,
+                    "phone_number": phone,
+                    "email_address": email,
+                    "department": department
+                })
+                save_data(st.session_state.user_profile, "user_profile.json")
+                st.success("Profile details saved successfully!")
+                st.rerun()
+
+        st.markdown("---")
+        st.subheader("Training Attended")
+        with st.form("new_training_form_dashboard"):
+            new_training_name = st.text_input("New Training Name", key="new_training_name_input_dash")
+            new_training_date = st.date_input("Training Date", key="new_training_date_input_dash", value=datetime.now())
+            
+            add_training_button = st.form_submit_button("Add Training Record")
+
+            if add_training_button:
+                if new_training_name:
+                    training_record = {"name": new_training_name, "date": str(new_training_date)}
+                    st.session_state.user_profile["training_attended"].append(training_record)
+                    save_data(st.session_state.user_profile, "user_profile.json")
+                    st.success(f"Added training: {new_training_name}")
+                    st.rerun()
+                else:
+                    st.error("Training name cannot be empty.")
+
+        current_trainings = st.session_state.user_profile.get("training_attended", [])
+        if current_trainings:
+            st.write("---")
+            st.markdown("#### Existing Training Records:")
+            training_container = st.container()
+            with training_container:
+                for i, training in enumerate(current_trainings):
+                    col_tr1, col_tr2, col_tr3 = st.columns([0.6, 0.3, 0.1])
+                    with col_tr1:
+                        st.write(f"- **{training.get('name', 'N/A')}**")
+                    with col_tr2:
+                        st.write(f"({training.get('date', 'N/A')})")
+                    with col_tr3:
+                        if st.button("x", key=f"delete_training_{i}_btn_dash"):
+                            st.session_state.user_profile["training_attended"].pop(i)
+                            save_data(st.session_state.user_profile, "user_profile.json")
+                            st.info("Training record deleted.")
+                            st.rerun()
         else:
-            st.info("No OPEX/CAPEX requests to display.")
+            st.info("No training records added yet.")
 
-    elif st.session_state.role == "HR Manager":
-        st.success("You have HR Manager access.")
-        # Display HR-specific dashboard elements
-        leave_requests = load_data(LEAVE_REQUESTS_FILE, [])
-        st.markdown("#### Leave Request Summary")
-        if leave_requests:
-            df_leave = pd.DataFrame(leave_requests)
-            status_counts = df_leave['status'].value_counts().reset_index()
-            status_counts.columns = ['Status', 'Count']
-            fig = px.pie(status_counts, values='Count', names='Status', title='Leave Request Status Distribution')
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown("---")
+
+    st.subheader("Company Overview KPIs")
+    
+    total_employees = 150
+    total_leave_requests_month = len([req for req in st.session_state.leave_requests 
+                                      if datetime.strptime(req['start_date'], '%Y-%m-%d').month == datetime.now().month])
+    open_goals = len([goal for goal in st.session_state.performance_goals if goal['status'] in ["Not Started", "In Progress", "On Hold"]])
+    pending_opex_capex = len([req for req in st.session_state.opex_capex_requests if req['status_md'] == "Pending"])
+
+
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+
+    with col_kpi1:
+        st.metric(label="Total Employees", value=total_employees)
+    with col_kpi2:
+        st.metric(label="Leave Requests This Month", value=total_leave_requests_month)
+    with col_kpi3:
+        st.metric(label="Open Goals", value=open_goals)
+    with col_kpi4:
+        st.metric(label="Pending Opex/Capex", value=pending_opex_capex)
+
+    st.markdown("---")
+
+    st.subheader("HR Data Visualizations")
+
+    with st.expander("Filter Leave Request Data"):
+        col_leave_filter1, col_leave_filter2 = st.columns(2)
+        with col_leave_filter1:
+            leave_start_date_filter = st.date_input("Leave Start Date (Filter)", value=datetime.now() - timedelta(days=90), key="leave_start_date_filter")
+        with col_leave_filter2:
+            leave_end_date_filter = st.date_input("Leave End Date (Filter)", value=datetime.now(), key="leave_end_date_filter")
+            
+        filtered_leave_requests = [
+            req for req in st.session_state.leave_requests
+            if leave_start_date_filter <= datetime.strptime(req['start_date'], '%Y-%m-%d').date() <= leave_end_date_filter
+        ]
+        
+    col_chart1, col_chart2 = st.columns(2)
+
+    with col_chart1:
+        st.markdown("#### Leave Type Distribution")
+        if filtered_leave_requests:
+            df_leave = pd.DataFrame(filtered_leave_requests)
+            leave_counts = df_leave['leave_type'].value_counts().reset_index()
+            leave_counts.columns = ['Leave Type', 'Count']
+            fig_pie = px.pie(leave_counts, values='Count', names='Leave Type', 
+                             title='Breakdown of Leave Requests by Type (Filtered)',
+                             hole=0.3)
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
         else:
-            st.info("No leave requests to display.")
+            st.info("No leave requests to display chart for the selected period.")
 
-    elif st.session_state.role == "Managing Director":
-        st.success("You have Managing Director access.")
-        # Display MD-specific dashboard elements (e.g., high-level summaries)
-        all_leave_requests = load_data(LEAVE_REQUESTS_FILE, [])
-        all_opex_capex_requests = load_data(OPEX_CAPEX_REQUESTS_FILE, [])
+    with col_chart2:
+        st.markdown("#### Performance Goal Status")
+        goal_status_filter = st.multiselect(
+            "Filter Goal Status",
+            options=["Not Started", "In Progress", "On Hold", "Complete"],
+            default=["Not Started", "In Progress", "On Hold", "Complete"],
+            key="goal_status_multiselect"
+        )
+        
+        filtered_performance_goals = [
+            goal for goal in st.session_state.performance_goals
+            if goal['status'] in goal_status_filter
+        ]
 
-        st.markdown("#### Overall Request Performance")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Total Approved Leave", len([r for r in all_leave_requests if r['status'] == 'Approved']))
-        with col2:
-            st.metric("Total Approved OPEX/CAPEX", len([r for r in all_opex_capex_requests if r['status'] == 'Approved']))
-
-    elif st.session_state.role == "Employee":
-        st.success(f"You have Employee access. Your Employee ID: {st.session_state.user_profile.get('employee_id', 'N/A')}")
-        # Display employee-specific dashboard (e.g., summary of their requests)
-        employee_id = st.session_state.user_profile.get('employee_id')
-        my_leave_requests = [req for req in load_data(LEAVE_REQUESTS_FILE, []) if req.get('employee_id') == employee_id]
-        my_opex_capex_requests = [req for req in load_data(OPEX_CAPEX_REQUESTS_FILE, []) if req.get('employee_id') == employee_id]
-
-        st.markdown("#### My Requests Overview")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("My Pending Leave Requests", len([r for r in my_leave_requests if r['status'] == 'Pending']))
-        with col2:
-            st.metric("My Pending OPEX/CAPEX Requests", len([r for r in my_opex_capex_requests if r['status'] == 'Pending']))
-
-        # Display recent activities (e.g., latest leave/opex status)
-        st.markdown("#### Recent Activity")
-        if my_leave_requests or my_opex_capex_requests:
-            st.write("Your most recent request statuses:")
-            if my_leave_requests:
-                latest_leave = max(my_leave_requests, key=lambda x: datetime.strptime(x['submission_date'], '%Y-%m-%d'))
-                st.info(f"Latest Leave Request (ID: {latest_leave['request_id']}): {latest_leave['status']}")
-            if my_opex_capex_requests:
-                latest_opex_capex = max(my_opex_capex_requests, key=lambda x: datetime.strptime(x['submission_date'], '%Y-%m-%d'))
-                st.info(f"Latest OPEX/CAPEX Request (ID: {latest_opex_capex['request_id']}): {latest_opex_capex['status']}")
+        if filtered_performance_goals:
+            df_goals = pd.DataFrame(filtered_performance_goals)
+            goal_status_counts = df_goals['status'].value_counts().reset_index()
+            goal_status_counts.columns = ['Status', 'Count']
+            fig_bar = px.bar(goal_status_counts, x='Status', y='Count', 
+                             title='Current Performance Goal Status (Filtered)',
+                             color='Status',
+                             color_discrete_map={
+                                 "Not Started": "lightgray",
+                                 "In Progress": "skyblue",
+                                 "On Hold": "orange",
+                                 "Complete": "lightgreen"
+                             })
+            st.plotly_chart(fig_bar, use_container_width=True)
         else:
-            st.info("You have not submitted any requests yet.")
+            st.info("No performance goals to display chart for the selected status.")
 
+    st.markdown("---")
 
-# --- Profile Management ---
-def display_profile_management():
-    st.subheader("My Profile")
-    user_profile = st.session_state.user_profile.get('profile', {}) # Get profile data from session state
+    st.subheader("Leave Information")
+    col_leave1, col_leave2 = st.columns(2)
 
-    with st.form("profile_form"):
-        st.markdown("#### Personal Information")
-        full_name = st.text_input("Full Name", value=user_profile.get("full_name", ""))
-        employee_id = st.text_input("Employee ID", value=user_profile.get("employee_id", ""), disabled=True) # Employee ID usually not editable
-        department = st.text_input("Department", value=user_profile.get("department", ""))
-        position = st.text_input("Position", value=user_profile.get("position", ""))
-        email = st.text_input("Email", value=user_profile.get("email", ""))
-        phone = st.text_input("Phone Number", value=user_profile.get("phone", ""))
-        address = st.text_area("Address", value=user_profile.get("address", ""))
-        emergency_contact = st.text_input("Emergency Contact", value=user_profile.get("emergency_contact", ""))
+    with col_leave1:
+        st.markdown("### Available Leave Days")
+        st.metric(label="Exam Leave", value="20 of 20 day(s)")
+        st.metric(label="Compassionate Leave", value="3 of 3 day(s)")
+        st.metric(label="Annual Leave", value="3 of 3 day(s)")
+        st.metric(label="Annual Leave (Testing)", value="2 of 6 day(s)")
+        st.link_button("View all", url="#")
 
-        submit_button = st.form_submit_button("Update Profile")
+    with col_leave2:
+        st.markdown("### View Employee(s) on Leave in your Department")
+        st.info("No employee is on leave today / this month")
 
-        if submit_button:
-            updated_profile = {
-                "full_name": full_name,
-                "employee_id": employee_id,
-                "department": department,
-                "position": position,
-                "email": email,
-                "phone": phone,
-                "address": address,
-                "emergency_contact": emergency_contact
-            }
-            # Update profile within the user's data in session state
-            st.session_state.user_profile['profile'] = updated_profile
-            # Save the entire users.json file
-            update_user_data(st.session_state.user_profile)
-            st.success("Profile updated successfully!")
+    st.markdown("---")
+
+    st.subheader("Quick Actions")
+    col_quick_actions = st.columns(3)
+    with col_quick_actions[0]:
+        if st.button("Apply for Leave", key="apply_leave_dashboard_bottom"):
+            st.session_state.current_page = "leave_request"
+            st.rerun()
+    with col_quick_actions[1]:
+        if st.button("Submit Opex/Capex", key="submit_opex_dashboard_bottom"):
+            st.session_state.current_page = "opex_capex_form"
+            st.rerun()
+    with col_quick_actions[2]:
+        if st.button("Set Goals", key="set_goals_dashboard_bottom"):
+            st.session_state.current_page = "performance_goal_setting"
             st.rerun()
 
-# --- Leave Request Functionality ---
+    st.markdown("---")
+
+    st.subheader("Recent Announcements")
+    st.write("No recent announcements.")
+
+    st.subheader("Employee Directory")
+    employee_data = [
+        {"ID": "GID/00152", "Name": "ABDULLAHI IBRAHIM", "Department": st.session_state.user_profile.get('department', 'N/A'), "Role": "HR Assistant"},
+        {"ID": "GID/00153", "Name": "Alice Smith", "Department": "Finance", "Role": "Accountant"},
+        {"ID": "GID/00154", "Name": "Bob Johnson", "Department": "IT", "Role": "Software Engineer"},
+        {"ID": "GID/00155", "Name": "Carol White", "Department": "Marketing", "Role": "Marketing Specialist"},
+    ]
+    df_employees = pd.DataFrame(employee_data)
+
+    employee_search_query = st.text_input("Search Employee by Name or Department", key="employee_search_bar")
+    
+    if employee_search_query:
+        df_employees_filtered = df_employees[
+            df_employees.apply(lambda row: employee_search_query.lower() in str(row).lower(), axis=1)
+        ]
+        if not df_employees_filtered.empty:
+            st.dataframe(df_employees_filtered, use_container_width=True)
+        else:
+            st.info("No employees match your search query.")
+    else:
+        st.dataframe(df_employees, use_container_width=True)
+
+# --- PDF Generation Function for Leave Requests ---
+def generate_leave_pdf(leave_request_data, user_profile):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12)
+
+    pdf.set_text_color(30, 144, 255)
+    pdf.set_font("Helvetica", 'B', 16)
+    pdf.cell(0, 10, "Polaris Digitech - Leave Application", align="C", ln=True)
+    pdf.set_text_color(0, 0, 0)
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Employee Details:", ln=True)
+    pdf.set_font("Helvetica", '', 12) 
+    pdf.cell(0, 7, f"Name: {user_profile.get('name', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Department: {user_profile.get('department', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Email: {user_profile.get('email_address', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Phone: {user_profile.get('phone_number', 'N/A')}", ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(0, 10, "Leave Request Details:", ln=True)
+    pdf.set_font("Helvetica", '', 10)
+    
+    for key, value in leave_request_data.items():
+        if key in ["start_date", "end_date", "submission_date"] and value:
+            try:
+                value = datetime.strptime(value, '%Y-%m-%d').strftime('%B %d, %Y')
+            except ValueError:
+                pass
+            
+        display_key = key.replace('_', ' ').title()
+        
+        pdf.cell(0, 7, f"{display_key}: {value}", ln=True)
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'I', 9) 
+    pdf.cell(0, 5, "This is an electronically generated document and does not require a signature.", align="C")
+
+    return bytes(pdf.output(dest='S'))
+
+def generate_opex_capex_pdf(request_data, user_profile):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12) 
+
+    pdf.set_text_color(30, 144, 255)
+    pdf.set_font("Helvetica", 'B', 16) 
+    pdf.cell(0, 10, f"Polaris Digitech - {request_data.get('requisition_type', 'N/A')} Requisition", align="C", ln=True)
+    pdf.set_text_color(0, 0, 0)
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Employee Details:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.cell(0, 7, f"Name: {user_profile.get('name', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Department: {user_profile.get('department', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Email: {user_profile.get('email_address', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Phone: {user_profile.get('phone_number', 'N/A')}", ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Requisition Details:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    
+    # Exclude certain keys that are handled separately or not needed in the main list
+    exclude_keys = [
+        "status_admin", "status_finance", "status_hr", "status_md", 
+        "uploaded_document_path", "amount_requested" # 'amount_requested' is now derived from segments
+    ]
+    
+    # Manually add the itemized costs first for clarity
+    pdf.cell(0, 7, f"Title: {request_data.get('title', 'N/A')}", ln=True)
+    pdf.multi_cell(0, 7, f"Details: {request_data.get('details', 'N/A')}")
+    pdf.cell(0, 7, f"Beneficiary: {request_data.get('beneficiaries', 'N/A')}", ln=True)
+    
+    pdf.ln(2)
+    pdf.set_font("Helvetica", 'BU', 10) 
+    pdf.cell(0, 7, "Cost Breakdown:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.cell(0, 7, f"Materials Cost: {request_data.get('materials_cost', 0.0):,.2f} NGN", ln=True)
+    pdf.cell(0, 7, f"Labour/Services Cost: {request_data.get('labour_cost', 0.0):,.2f} NGN", ln=True)
+    pdf.cell(0, 7, f"Withholding Tax (%): {request_data.get('wht_percentage', 'None')}", ln=True)
+    pdf.cell(0, 7, f"Withholding Tax Amount: {request_data.get('wht_amount', 0.0):,.2f} NGN", ln=True)
+    pdf.cell(0, 7, f"Net Labour/Services Cost: {request_data.get('net_labour_cost', 0.0):,.2f} NGN", ln=True)
+    pdf.set_font("Helvetica", 'B', 10) 
+    pdf.cell(0, 7, f"Total Net Amount Requested: {request_data.get('net_amount_requested', 0.0):,.2f} NGN", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    
+    pdf.cell(0, 7, f"Amount Budgeted: {request_data.get('amount_budgeted', 0.0):,.2f} NGN", ln=True)
+    pdf.cell(0, 7, f"Budget Balance: {request_data.get('budget_balance', 0.0):,.2f} NGN", ln=True)
+    pdf.ln(2) # Little space
+
+    pdf.set_font("Helvetica", 'BU', 10) 
+    pdf.cell(0, 7, "Account Details:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.cell(0, 7, f"Account Name: {request_data.get('account_name', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Account No: {request_data.get('account_no', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Bank: {request_data.get('bank', 'N/A')}", ln=True)
+    pdf.ln(2)
+
+    # Any other keys not handled above
+    for key, value in request_data.items():
+        if key not in exclude_keys and key not in [
+            "materials_cost", "labour_cost", "wht_percentage", 
+            "wht_amount", "net_labour_cost", "net_amount_requested", 
+            "amount_budgeted", "budget_balance", "title", "details", 
+            "beneficiaries", "account_name", "account_no", "bank", "requisition_type"
+        ]: # Ensure we don't duplicate already printed fields
+            if key == "submitted_date" and value:
+                try:
+                    value = datetime.strptime(value, '%Y-%m-%d').strftime('%B %d, %Y')
+                except ValueError:
+                    pass
+            
+            display_key = key.replace('_', ' ').title()
+            pdf.cell(0, 7, f"{display_key}: {value}", ln=True)
+
+    uploaded_doc_path = request_data.get("uploaded_document_path")
+    if uploaded_doc_path and os.path.exists(uploaded_doc_path):
+        pdf.ln(5)
+        pdf.set_font("Helvetica", 'B', 12) 
+        pdf.cell(0, 10, "Attached Document:", ln=True)
+        pdf.set_font("Helvetica", '', 10) 
+        pdf.cell(0, 7, f"- {os.path.basename(uploaded_doc_path)}", ln=True)
+    else:
+        pdf.cell(0, 7, "No document attached.", ln=True)
+
+    pdf.ln(5)
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Approval Status:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.cell(0, 7, f"Admin Manager: {request_data.get('status_admin', 'Pending')}", ln=True)
+    pdf.cell(0, 7, f"Finance Manager: {request_data.get('status_finance', 'Pending')}", ln=True)
+    pdf.cell(0, 7, f"HR Manager: {request_data.get('status_hr', 'Pending')}", ln=True)
+    pdf.cell(0, 7, f"Managing Director: {request_data.get('status_md', 'Pending')}", ln=True)
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'I', 9) 
+    pdf.cell(0, 5, "This is an electronically generated document and does not require a signature.", align="C")
+
+    return bytes(pdf.output(dest='S'))
+
+def generate_appraisal_pdf(appraisal_data, user_profile):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12) 
+
+    pdf.set_text_color(30, 144, 255)
+    pdf.set_font("Helvetica", 'B', 16) 
+    pdf.cell(0, 10, "Polaris Digitech - Performance Appraisal", align="C", ln=True)
+    pdf.set_text_color(0, 0, 0)
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Employee Details:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.cell(0, 7, f"Name: {user_profile.get('name', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Department: {user_profile.get('department', 'N/A')}", ln=True)
+    pdf.cell(0, 7, f"Email: {user_profile.get('email_address', 'N/A')}", ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Appraisal Period: " + appraisal_data.get('appraisal_period', 'N/A'), ln=True)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", 'B', 11) 
+    pdf.cell(0, 10, "Performance Goals:", ln=True)
+    pdf.ln(2)
+
+    total_weighted_self_score = 0
+    total_weighted_supervisor_score = 0
+    total_weight = 0
+
+    for i, goal in enumerate(appraisal_data.get('goals', [])):
+        pdf.set_font("Helvetica", 'B', 10) 
+        # Use multi_cell for goal description as it can be long
+        pdf.multi_cell(0, 7, f"Goal {i+1}: {goal.get('s_n_goals', 'N/A')}") 
+        pdf.set_font("Helvetica", '', 10) 
+        pdf.cell(0, 7, f"  Weight: {goal.get('weight_self_rating', 0)}%", ln=True)
+        pdf.cell(0, 7, f"  Self-Appraisal Score (0-5): {goal.get('self_appraisal_score', 'N/A')}", ln=True)
+        # Use multi_cell for employee remark as it can be multi-line
+        pdf.multi_cell(0, 7, f"  Employee Remark: {goal.get('employee_remark', 'N/A')}")
+        
+        # Changed from multi_cell to cell for these lines. Removed leading spaces in f-string to give more space.
+        pdf.cell(0, 7, f"Supervisor's Score (0-5): {goal.get('line_managers_rating', 'N/A')}", ln=True) 
+        pdf.multi_cell(0, 7, f"Supervisor's Comment: {goal.get('supervisor_comment', 'N/A')}") # Supervisor comment can be long
+
+        pdf.ln(2)
+
+        # Calculate weighted scores (assuming scores are 0-5 and need scaling for percentage)
+        weight = goal.get('weight_self_rating', 0)
+        self_score = goal.get('self_appraisal_score', 0)
+        supervisor_score = goal.get('line_managers_rating', 0) # Use 0 if not present for calculation
+
+        # Scale 0-5 score to 0-100 for weighted calculation if desired, or keep as is
+        # For overall score, let's keep 0-5 scale and calculate directly
+        total_weighted_self_score += (weight / 100) * self_score
+        total_weighted_supervisor_score += (weight / 100) * supervisor_score
+        total_weight += weight
+
+    pdf.ln(5)
+    pdf.set_font("Helvetica", 'B', 12) 
+    pdf.cell(0, 10, "Summary Scores:", ln=True)
+    pdf.set_font("Helvetica", '', 10) 
+
+    if total_weight > 0:
+        overall_self_score_scaled = (total_weighted_self_score / total_weight) * 100 if total_weight > 0 else 0
+        overall_supervisor_score_scaled = (total_weighted_supervisor_score / total_weight) * 100 if total_weight > 0 else 0
+
+        # Calculate overall 0-5 score for the PDF summary
+        overall_self_score_0_5 = (overall_self_score_scaled / 100) * 5
+        overall_supervisor_score_0_5 = (overall_supervisor_score_scaled / 100) * 5
+
+        pdf.cell(0, 7, f"Overall Self-Appraisal Score (0-5): {overall_self_score_0_5:,.2f}", ln=True)
+        pdf.cell(0, 7, f"Overall Supervisor's Score (0-5): {overall_supervisor_score_0_5:,.2f}", ln=True)
+    else:
+        pdf.cell(0, 7, "No weighted goals to calculate overall scores.", ln=True)
+
+    pdf.ln(5)
+    pdf.set_font("Helvetica", 'B', 11) 
+    pdf.cell(0, 10, "Overall Supervisor's Comment:", ln=True) # New
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.multi_cell(0, 7, appraisal_data.get('overall_supervisor_comment', 'N/A')) # New
+
+    pdf.ln(5)
+    pdf.set_font("Helvetica", 'B', 11) 
+    pdf.cell(0, 10, "Recommendation:", ln=True) # New
+    pdf.set_font("Helvetica", '', 10) 
+    pdf.multi_cell(0, 7, appraisal_data.get('recommendation', 'N/A')) # New
+
+
+    pdf.ln(10)
+    pdf.set_font("Helvetica", 'I', 9) 
+    pdf.cell(0, 5, "This is an electronically generated document and does not require a signature.", align="C")
+
+    return bytes(pdf.output(dest='S'))
+
+# --- Leave Request Form ---
 def leave_request_form():
-    st.subheader("Leave Request Form")
+    st.title("Leave Request Form")
+
     with st.form("leave_form"):
-        employee_id = st.session_state.user_profile.get('employee_id', 'N/A')
-        username = st.session_state.username
+        title = st.text_input("Request Title")
+        details = st.text_area("Details", help="You can use Markdown for **bold**, *italics*, `code`, and basic tables.\n\nExample table:\n```\n| Header 1 | Header 2 |\n|----------|----------|\n| Item 1   | Value 1  |\n```")
+        entitled_leave = st.number_input("Annual Leave Days Entitled", min_value=0, value=20)
+        reliever = st.text_input("Name of Reliever Officer")
+        leave_type = st.selectbox("Leave Type", ["Annual Leave", "Casual Leave", "Exam Leave", "Maternity Leave", "Bereavement Leave", "Sick Leave"])
+        start_date = st.date_input("Start Date", datetime.now())
+        end_date = st.date_input("End Date", datetime.now() + timedelta(days=7))
 
-        st.text_input("Employee ID", value=employee_id, disabled=True)
-        st.text_input("Requesting User", value=username, disabled=True)
+        submitted = st.form_submit_button("Calculate and Submit Leave Request")
 
-        leave_type = st.selectbox("Leave Type", ["Annual Leave", "Sick Leave", "Maternity Leave", "Paternity Leave", "Casual Leave", "Bereavement Leave"])
-        start_date = st.date_input("Start Date", datetime.today())
-        end_date = st.date_input("End Date", datetime.today() + timedelta(days=7))
-        reason = st.text_area("Reason for Leave")
-
-        submit_button = st.form_submit_button("Submit Leave Request")
-
-        if submit_button:
-            if not reason:
-                st.error("Reason for leave is required.")
-            elif end_date < start_date:
-                st.error("End date cannot be before start date.")
+        if submitted:
+            if not all([title, details, reliever, leave_type, start_date, end_date]):
+                st.error("All fields must be filled out.")
             else:
-                leave_requests = load_data(LEAVE_REQUESTS_FILE, [])
-                request_id = f"LR-{len(leave_requests) + 1:04d}"
-                new_request = {
-                    "request_id": request_id,
-                    "employee_id": employee_id, # Tag with employee ID
-                    "username": username, # Tag with username
+                leave_days_taken = (end_date - start_date).days + 1
+                leave_remaining = entitled_leave - leave_days_taken
+
+                if leave_remaining < 0:
+                    st.warning(f"You are requesting {leave_days_taken} days, but only have {entitled_leave} days entitled. This would result in {abs(leave_remaining)} days negative leave.")
+
+                leave_request = {
+                    "title": title,
+                    "details": details,
+                    "entitled_leave": entitled_leave,
+                    "reliever": reliever,
                     "leave_type": leave_type,
                     "start_date": str(start_date),
                     "end_date": str(end_date),
-                    "reason": reason,
-                    "submission_date": datetime.now().strftime("%Y-%m-%d"),
-                    "status": "Pending",
-                    "approvals": {
-                        "HR Manager": {"status": "Pending", "date": None},
-                        "Admin Manager": {"status": "Pending", "date": None}
-                    }
+                    "leave_taken": leave_days_taken,
+                    "leave_remaining": leave_remaining,
+                    "submission_date": str(datetime.now().date())
                 }
-                leave_requests.append(new_request)
-                save_data(leave_requests, LEAVE_REQUESTS_FILE)
-                st.success(f"Leave request {request_id} submitted successfully!")
-
-                # Simulate email notification to HR Manager
-                hr_manager_email = APPROVAL_EMAILS.get("HR Manager", "hr_manager@example.com")
-                subject = f"New Leave Request ({request_id}) from {username}"
-                body = f"A new leave request has been submitted by {username} (ID: {employee_id}) for {leave_type} from {start_date} to {end_date}. Reason: {reason}. Please review."
-                send_email_notification(hr_manager_email, subject, body)
+                st.session_state.leave_requests.append(leave_request)
+                save_data(st.session_state.leave_requests, "leave_requests.json")
+                st.success("Your leave request has been submitted for approval.")
+                st.session_state.current_page = "view_leave_applications"
                 st.rerun()
 
+    if st.button("Back to Dashboard", key="back_from_leave_form"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
+
+# --- View Leave Applications Page ---
 def view_leave_applications():
-    st.subheader("View Leave Applications")
-    all_leave_requests = load_data(LEAVE_REQUESTS_FILE, [])
+    st.title("My Leave Applications")
 
-    if not all_leave_requests:
-        st.info("No leave applications available.")
-        return
+    if not st.session_state.leave_requests:
+        st.info("You have not submitted any leave applications yet.")
+        if st.button("Apply for Leave Now"):
+            st.session_state.current_page = "leave_request"
+            st.rerun()
+    else:
+        st.write("Here are your submitted leave applications:")
+        
+        for i, lr in enumerate(st.session_state.leave_requests):
+            st.markdown(f"### Application {i+1}: {lr.get('title', 'Leave Request')}")
+            st.write(f"**Type:** {lr.get('leave_type', 'N/A')}")
+            st.write(f"**Period:** {lr.get('start_date', 'N/A')} to {lr.get('end_date', 'N/A')} ({lr.get('leave_taken', 'N/A')} days)")
+            st.write(f"**Reliever:** {lr.get('reliever', 'N/A')}")
+            st.markdown(f"**Details:**")
+            st.markdown(lr.get('details', 'N/A'))
+            st.write(f"**Submitted On:** {lr.get('submission_date', 'N/A')}")
 
-    # Filter based on role
-    if st.session_state.role == "Employee":
-        employee_id = st.session_state.user_profile.get('employee_id')
-        filtered_requests = [req for req in all_leave_requests if req.get('employee_id') == employee_id]
-        if not filtered_requests:
-            st.info("You have not submitted any leave requests.")
-            return
-        df = pd.DataFrame(filtered_requests)
-        st.dataframe(df)
+            pdf_bytes = generate_leave_pdf(lr, st.session_state.user_profile)
+            st.download_button(
+                label=f"Download Application {i+1} as PDF",
+                data=pdf_bytes,
+                file_name=f"Leave_Application_{i+1}_{lr.get('start_date', 'N/A')}.pdf",
+                mime="application/pdf",
+                key=f"download_leave_pdf_{i}"
+            )
+            st.markdown("---")
+            
+    if st.button("Back to Dashboard", key="back_from_view_applications"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
 
-    elif st.session_state.role in ["HR Manager", "Admin Manager", "Managing Director"]:
-        df = pd.DataFrame(all_leave_requests)
-
-        # Basic filtering for managers
-        filter_status = st.selectbox("Filter by Status", ["All", "Pending", "Approved", "Rejected"])
-        if filter_status != "All":
-            df = df[df['status'] == filter_status]
-
-        if not df.empty:
-            st.dataframe(df)
-
-            # Approval/Rejection for HR/Admin Managers
-            if st.session_state.role in ["HR Manager", "Admin Manager"]:
-                st.markdown("#### Action on Leave Requests")
-                selected_request_id = st.selectbox("Select Request ID to Action", df['request_id'].tolist())
-
-                if selected_request_id:
-                    request_to_action = next((req for req in all_leave_requests if req['request_id'] == selected_request_id), None)
-                    if request_to_action:
-                        # Ensure only relevant manager can approve/reject their part
-                        current_manager_role = st.session_state.role
-                        approval_key = current_manager_role # Use role as key (e.g., "HR Manager")
-
-                        st.write(f"**Request ID:** {request_to_action['request_id']}")
-                        st.write(f"**Employee:** {request_to_action['username']} (ID: {request_to_action['employee_id']})")
-                        st.write(f"**Type:** {request_to_action['leave_type']}")
-                        st.write(f"**Dates:** {request_to_action['start_date']} to {request_to_action['end_date']}")
-                        st.write(f"**Reason:** {request_to_action['reason']}")
-                        st.write(f"**Current Status:** {request_to_action['status']}")
-                        st.write(f"**HR Approval:** {request_to_action['approvals'].get('HR Manager', {}).get('status', 'N/A')}")
-                        st.write(f"**Admin Approval:** {request_to_action['approvals'].get('Admin Manager', {}).get('status', 'N/A')}")
-
-                        if request_to_action['approvals'].get(approval_key, {}).get('status') == "Pending":
-                            action = st.radio(f"Action for {current_manager_role}", ["None", "Approve", "Reject"], key=f"leave_action_{selected_request_id}")
-                            if action != "None":
-                                if st.button(f"Confirm {action} for {selected_request_id}"):
-                                    request_to_action['approvals'][approval_key]['status'] = action
-                                    request_to_action['approvals'][approval_key]['date'] = datetime.now().strftime("%Y-%m-%d")
-
-                                    # Check overall status
-                                    hr_status = request_to_action['approvals'].get('HR Manager', {}).get('status')
-                                    admin_status = request_to_action['approvals'].get('Admin Manager', {}).get('status')
-
-                                    if action == "Rejected":
-                                        request_to_action['status'] = "Rejected" # Any rejection makes the whole request rejected
-                                    elif hr_status == "Approved" and admin_status == "Approved":
-                                        request_to_action['status'] = "Approved"
-
-                                    save_data(all_leave_requests, LEAVE_REQUESTS_FILE)
-                                    st.success(f"Leave request {selected_request_id} {action} by {current_manager_role}.")
-
-                                    # Notify requesting employee
-                                    employee_email = next((u['profile']['email'] for u in load_data(USERS_FILE, []) if u['employee_id'] == request_to_action['employee_id']), None)
-                                    if employee_email:
-                                        subject = f"Your Leave Request ({selected_request_id}) Status Update"
-                                        body = f"Your leave request for {request_to_action['leave_type']} from {request_to_action['start_date']} to {request_to_action['end_date']} has been {request_to_action['status']} by {current_manager_role}."
-                                        send_email_notification(employee_email, subject, body)
-                                    st.rerun()
-                        else:
-                            st.info(f"This request has already been {request_to_action['approvals'].get(approval_key, {}).get('status', 'N/A')} by {current_manager_role}.")
-                    else:
-                        st.warning("Selected request not found.")
-        else:
-            st.info("No leave applications matching the filter.")
-
-# --- OPEX/CAPEX Request Functionality ---
+# --- Opex/Capex Request Form ---
 def opex_capex_form():
-    st.subheader("OPEX/CAPEX Request Form")
+    st.title("Opex/Capex Requisition Form")
+
     with st.form("opex_capex_form"):
-        employee_id = st.session_state.user_profile.get('employee_id', 'N/A')
-        username = st.session_state.username
+        st.subheader("Requisition Details")
+        requisition_type = st.radio("Requisition Type", ["Opex", "Capex"], horizontal=True, key="opex_capex_type")
+        title = st.text_input("Title", help="Brief summary of the request (e.g., 'Purchase of Office Supplies', 'Server Upgrade Project')")
+        details = st.text_area("Detailed Justification & Description", height=150, help="Provide comprehensive details including necessity, expected benefits, and specifications.")
+        
+        st.subheader("Cost Breakdown")
+        materials_cost = st.number_input("Cost of Materials/Goods (NGN)", min_value=0.0, format="%.2f", value=0.0)
+        labour_cost = st.number_input("Cost of Labour/Services (NGN)", min_value=0.0, format="%.2f", value=0.0)
+        
+        # Calculate Amount Requested (before WHT)
+        amount_requested_before_wht = materials_cost + labour_cost
 
-        st.text_input("Employee ID", value=employee_id, disabled=True)
-        st.text_input("Requesting User", value=username, disabled=True)
+        st.write(f"**Total Amount Requested (before WHT): {amount_requested_before_wht:,.2f} NGN**")
 
-        request_type = st.selectbox("Request Type", ["OPEX", "CAPEX"])
-        item_description = st.text_area("Item Description/Purpose")
-        estimated_cost = st.number_input("Estimated Cost (NGN)", min_value=0.0, format="%.2f")
-        beneficiary_name = st.selectbox("Beneficiary Name", list(BENEFICIARIES_DATA.keys()))
+        wht_percentage_options = ["None", "5%", "10%"]
+        wht_percentage_str = st.selectbox("Withholding Tax (WHT) Percentage on Services", options=wht_percentage_options, index=0)
+        
+        wht_amount = 0.0
+        net_labour_cost = labour_cost
 
-        submit_button = st.form_submit_button("Submit Request")
+        if wht_percentage_str != "None":
+            wht_rate = float(wht_percentage_str.strip('%')) / 100
+            wht_amount = labour_cost * wht_rate
+            net_labour_cost = labour_cost - wht_amount
+            st.info(f"Calculated WHT Amount: {wht_amount:,.2f} NGN (Net Labour/Services Cost: {net_labour_cost:,.2f} NGN)")
 
-        if submit_button:
-            if not item_description or not estimated_cost or not beneficiary_name:
-                st.error("All fields are required.")
-            else:
-                opex_capex_requests = load_data(OPEX_CAPEX_REQUESTS_FILE, [])
-                request_id = f"{request_type}-{len(opex_capex_requests) + 1:04d}"
-                beneficiary_details = BENEFICIARIES_DATA.get(beneficiary_name, {})
+        net_amount_requested = materials_cost + net_labour_cost
+        st.markdown(f"### **Total Net Amount Requested: {net_amount_requested:,.2f} NGN**")
 
-                new_request = {
-                    "request_id": request_id,
-                    "employee_id": employee_id, # Tag with employee ID
-                    "username": username, # Tag with username
-                    "request_type": request_type,
-                    "item_description": item_description,
-                    "estimated_cost": estimated_cost,
-                    "beneficiary_name": beneficiary_name,
-                    "beneficiary_account_name": beneficiary_details.get("Account Name", ""),
-                    "beneficiary_account_no": beneficiary_details.get("Account No", ""),
-                    "beneficiary_bank": beneficiary_details.get("Bank", ""),
-                    "submission_date": datetime.now().strftime("%Y-%m-%d"),
-                    "status": "Pending",
-                    "approvals": {
-                        "Finance Manager": {"status": "Pending", "date": None},
-                        "Managing Director": {"status": "Pending", "date": None}
-                    }
-                }
-                opex_capex_requests.append(new_request)
-                save_data(opex_capex_requests, OPEX_CAPEX_REQUESTS_FILE)
-                st.success(f"OPEX/CAPEX request {request_id} submitted successfully!")
+        amount_budgeted = st.number_input("Amount Budgeted for this (NGN)", min_value=0.0, format="%.2f", help="Enter the budgeted amount for this specific request if applicable.")
+        budget_balance = amount_budgeted - net_amount_requested
+        st.info(f"Calculated Budget Balance: {budget_balance:,.2f} NGN")
 
-                # Simulate email notification to Finance Manager
-                finance_manager_email = APPROVAL_EMAILS.get("Finance Manager", "finance_manager@example.com")
-                subject = f"New OPEX/CAPEX Request ({request_id}) from {username}"
-                body = f"A new {request_type} request for '{item_description}' (Estimated Cost: NGN {estimated_cost:,.2f}) has been submitted by {username} (ID: {employee_id}). Please review."
-                send_email_notification(finance_manager_email, subject, body)
-                st.rerun()
+        st.subheader("Beneficiary Details")
+        selected_beneficiary_name = st.selectbox("Select Beneficiary", BENEFICIARY_NAMES, key="beneficiary_select")
 
-def view_opex_capex_applications():
-    st.subheader("View OPEX/CAPEX Applications")
-    all_opex_capex_requests = load_data(OPEX_CAPEX_REQUESTS_FILE, [])
+        account_name_default = BENEFICIARIES_DATA[selected_beneficiary_name]["Account Name"]
+        account_no_default = BENEFICIARIES_DATA[selected_beneficiary_name]["Account No"]
+        bank_default = BENEFICIARIES_DATA[selected_beneficiary_name]["Bank"]
 
-    if not all_opex_capex_requests:
-        st.info("No OPEX/CAPEX applications available.")
-        return
-
-    # Filter based on role
-    if st.session_state.role == "Employee":
-        employee_id = st.session_state.user_profile.get('employee_id')
-        filtered_requests = [req for req in all_opex_capex_requests if req.get('employee_id') == employee_id]
-        if not filtered_requests:
-            st.info("You have not submitted any OPEX/CAPEX requests.")
-            return
-        df = pd.DataFrame(filtered_requests)
-        st.dataframe(df)
-
-    elif st.session_state.role in ["Finance Manager", "Managing Director", "Admin Manager"]: # Admin can also view all
-        df = pd.DataFrame(all_opex_capex_requests)
-
-        # Basic filtering for managers
-        filter_status = st.selectbox("Filter by Status", ["All", "Pending", "Approved", "Rejected"])
-        if filter_status != "All":
-            df = df[df['status'] == filter_status]
-
-        if not df.empty:
-            st.dataframe(df)
-
-            # Approval/Rejection for Finance/MD
-            if st.session_state.role in ["Finance Manager", "Managing Director"]:
-                st.markdown("#### Action on OPEX/CAPEX Requests")
-                selected_request_id = st.selectbox("Select Request ID to Action", df['request_id'].tolist())
-
-                if selected_request_id:
-                    request_to_action = next((req for req in all_opex_capex_requests if req['request_id'] == selected_request_id), None)
-                    if request_to_action:
-                        current_manager_role = st.session_state.role
-                        approval_key = current_manager_role # Use role as key (e.g., "Finance Manager")
-
-                        st.write(f"**Request ID:** {request_to_action['request_id']}")
-                        st.write(f"**Employee:** {request_to_action['username']} (ID: {request_to_action['employee_id']})")
-                        st.write(f"**Type:** {request_to_action['request_type']}")
-                        st.write(f"**Description:** {request_to_action['item_description']}")
-                        st.write(f"**Cost:** NGN {request_to_action['estimated_cost']:,.2f}")
-                        st.write(f"**Beneficiary:** {request_to_action['beneficiary_name']}")
-                        st.write(f"**Current Status:** {request_to_action['status']}")
-                        st.write(f"**Finance Approval:** {request_to_action['approvals'].get('Finance Manager', {}).get('status', 'N/A')}")
-                        st.write(f"**MD Approval:** {request_to_action['approvals'].get('Managing Director', {}).get('status', 'N/A')}")
-
-                        if request_to_action['approvals'].get(approval_key, {}).get('status') == "Pending":
-                            action = st.radio(f"Action for {current_manager_role}", ["None", "Approve", "Reject"], key=f"opex_capex_action_{selected_request_id}")
-                            if action != "None":
-                                if st.button(f"Confirm {action} for {selected_request_id}"):
-                                    request_to_action['approvals'][approval_key]['status'] = action
-                                    request_to_action['approvals'][approval_key]['date'] = datetime.now().strftime("%Y-%m-%d")
-
-                                    # Check overall status
-                                    finance_status = request_to_action['approvals'].get('Finance Manager', {}).get('status')
-                                    md_status = request_to_action['approvals'].get('Managing Director', {}).get('status')
-
-                                    if action == "Rejected":
-                                        request_to_action['status'] = "Rejected" # Any rejection makes the whole request rejected
-                                    elif finance_status == "Approved" and md_status == "Approved":
-                                        request_to_action['status'] = "Approved"
-
-                                    save_data(all_opex_capex_requests, OPEX_CAPEX_REQUESTS_FILE)
-                                    st.success(f"OPEX/CAPEX request {selected_request_id} {action} by {current_manager_role}.")
-
-                                    # Notify requesting employee
-                                    employee_email = next((u['profile']['email'] for u in load_data(USERS_FILE, []) if u['employee_id'] == request_to_action['employee_id']), None)
-                                    if employee_email:
-                                        subject = f"Your OPEX/CAPEX Request ({selected_request_id}) Status Update"
-                                        body = f"Your {request_to_action['request_type']} request for '{request_to_action['item_description']}' has been {request_to_action['status']} by {current_manager_role}."
-                                        send_email_notification(employee_email, subject, body)
-                                    st.rerun()
-                        else:
-                            st.info(f"This request has already been {request_to_action['approvals'].get(approval_key, {}).get('status', 'N/A')} by {current_manager_role}.")
-                    else:
-                        st.warning("Selected request not found.")
+        if selected_beneficiary_name == "Other (Manually Enter Details)":
+            account_name = st.text_input("Account Name", value="", help="Enter the beneficiary's account name")
+            account_no = st.text_input("Account Number", value="", help="Enter the beneficiary's account number")
+            bank = st.text_input("Bank Name", value="", help="Enter the beneficiary's bank name")
         else:
-            st.info("No OPEX/CAPEX applications matching the filter.")
+            account_name = st.text_input("Account Name", value=account_name_default, disabled=True)
+            account_no = st.text_input("Account Number", value=account_no_default, disabled=True)
+            bank = st.text_input("Bank Name", value=bank_default, disabled=True)
+        
+        st.subheader("Supporting Documents")
+        uploaded_file = st.file_uploader("Upload Supporting Document (e.g., Invoice, Quotation)", type=["pdf", "jpg", "png", "jpeg"])
+        
+        submitted = st.form_submit_button("Submit Requisition")
 
-# --- Performance Goal Setting ---
-def performance_goal_setting():
-    st.subheader("Performance Goal Setting")
-    user_goals = st.session_state.user_profile.get('performance_goals', []) # Get goals from logged-in user's data
-
-    if 'edit_goal_index' not in st.session_state:
-        st.session_state.edit_goal_index = None
-
-    with st.form("goal_form"):
-        st.markdown("#### Set New Goal")
-        goal_title = st.text_input("Goal Title")
-        goal_description = st.text_area("Description")
-        target_date = st.date_input("Target Completion Date", datetime.today() + timedelta(days=90))
-        metric = st.text_input("Key Metric (e.g., 'Increase sales by 10%')")
-        weight = st.slider("Weight (1-100%)", 1, 100, 50)
-
-        add_goal_button = st.form_submit_button("Add Goal")
-
-        if add_goal_button:
-            if not goal_title or not goal_description or not metric:
-                st.error("Goal Title, Description, and Key Metric are required.")
+        if submitted:
+            if not all([title, details, selected_beneficiary_name, account_name, account_no, bank]):
+                st.error("Please fill in all required requisition and beneficiary details.")
+            elif net_amount_requested <= 0:
+                st.error("Total Net Amount Requested must be greater than zero.")
             else:
-                new_goal = {
-                    "id": len(user_goals) + 1, # Simple ID generation
-                    "title": goal_title,
-                    "description": goal_description,
-                    "target_date": str(target_date),
-                    "metric": metric,
-                    "weight": weight,
-                    "status": "Pending", # Initial status
-                    "progress": 0 # Initial progress
+                uploaded_doc_path = save_uploaded_file(uploaded_file)
+
+                opex_capex_request = {
+                    "requisition_type": requisition_type,
+                    "title": title,
+                    "details": details,
+                    "materials_cost": materials_cost,
+                    "labour_cost": labour_cost,
+                    "wht_percentage": wht_percentage_str,
+                    "wht_amount": wht_amount,
+                    "net_labour_cost": net_labour_cost,
+                    "net_amount_requested": net_amount_requested,
+                    "amount_budgeted": amount_budgeted,
+                    "budget_balance": budget_balance,
+                    "beneficiaries": selected_beneficiary_name,
+                    "account_name": account_name,
+                    "account_no": account_no,
+                    "bank": bank,
+                    "uploaded_document_path": uploaded_doc_path,
+                    "submitted_date": str(datetime.now().date()),
+                    "status_admin": "Pending", # Initial status for Admin Manager
+                    "status_finance": "Pending", # Initial status for Finance Manager
+                    "status_hr": "Pending",     # Initial status for HR Manager
+                    "status_md": "Pending"      # Initial status for Managing Director
                 }
-                user_goals.append(new_goal)
-                st.session_state.user_profile['performance_goals'] = user_goals # Update session state
-                update_user_data(st.session_state.user_profile) # Save updated user data
-                st.success("Goal added successfully!")
+                st.session_state.opex_capex_requests.append(opex_capex_request)
+                save_data(st.session_state.opex_capex_requests, "opex_capex_requests.json")
+                st.success("Opex/Capex requisition submitted for approval.")
+                st.session_state.current_page = "view_opex_capex_applications"
                 st.rerun()
+
+    if st.button("Back to Dashboard", key="back_from_opex_capex_form"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
+
+# --- View Opex/Capex Applications Page ---
+def view_opex_capex_applications():
+    st.title("My Opex/Capex Requisitions")
+
+    if not st.session_state.opex_capex_requests:
+        st.info("You have not submitted any Opex/Capex requisitions yet.")
+        if st.button("Submit a Requisition Now"):
+            st.session_state.current_page = "opex_capex_form"
+            st.rerun()
+    else:
+        st.write("Here are your submitted Opex/Capex requisitions:")
+        
+        # Optionally add filters for status or type
+        filter_status = st.selectbox("Filter by Status", ["All", "Pending", "Approved", "Rejected"], key="opex_filter_status")
+        filter_type = st.selectbox("Filter by Type", ["All", "Opex", "Capex"], key="opex_filter_type")
+
+        filtered_requests = st.session_state.opex_capex_requests
+        if filter_status != "All":
+            # For Opex/Capex, "Pending" usually refers to the final MD status
+            filtered_requests = [req for req in filtered_requests if req['status_md'] == filter_status]
+        if filter_type != "All":
+            filtered_requests = [req for req in filtered_requests if req['requisition_type'] == filter_type]
+
+        if not filtered_requests:
+            st.info("No requisitions match your filter criteria.")
+        else:
+            for i, req in enumerate(filtered_requests):
+                st.markdown(f"### Requisition {i+1}: {req.get('title', 'N/A')} ({req.get('requisition_type', 'N/A')})")
+                st.write(f"**Submitted On:** {req.get('submitted_date', 'N/A')}")
+                st.write(f"**Net Amount Requested:** {req.get('net_amount_requested', 0.0):,.2f} NGN")
+                st.write(f"**Beneficiary:** {req.get('beneficiaries', 'N/A')}")
+                
+                st.markdown("##### Current Approval Status:")
+                st.write(f"- Admin Manager: **{req.get('status_admin', 'Pending')}**")
+                st.write(f"- Finance Manager: **{req.get('status_finance', 'Pending')}**")
+                st.write(f"- HR Manager: **{req.get('status_hr', 'Pending')}**")
+                st.write(f"- Managing Director: **{req.get('status_md', 'Pending')}**")
+                
+                with st.expander(f"View Details for Requisition {i+1}"):
+                    st.write(f"**Details:**")
+                    st.markdown(req.get('details', 'N/A'))
+                    st.write(f"**Materials Cost:** {req.get('materials_cost', 0.0):,.2f} NGN")
+                    st.write(f"**Labour/Services Cost:** {req.get('labour_cost', 0.0):,.2f} NGN")
+                    st.write(f"**WHT Percentage:** {req.get('wht_percentage', 'None')}")
+                    st.write(f"**WHT Amount:** {req.get('wht_amount', 0.0):,.2f} NGN")
+                    st.write(f"**Net Labour/Services Cost:** {req.get('net_labour_cost', 0.0):,.2f} NGN")
+                    st.write(f"**Amount Budgeted:** {req.get('amount_budgeted', 0.0):,.2f} NGN")
+                    st.write(f"**Budget Balance:** {req.get('budget_balance', 0.0):,.2f} NGN")
+                    st.write(f"**Account Name:** {req.get('account_name', 'N/A')}")
+                    st.write(f"**Account Number:** {req.get('account_no', 'N/A')}")
+                    st.write(f"**Bank:** {req.get('bank', 'N/A')}")
+
+                    uploaded_doc_path = req.get("uploaded_document_path")
+                    if uploaded_doc_path and os.path.exists(uploaded_doc_path):
+                        st.download_button(
+                            label=f"Download Attached Document: {os.path.basename(uploaded_doc_path)}",
+                            data=open(uploaded_doc_path, "rb").read(),
+                            file_name=os.path.basename(uploaded_doc_path),
+                            key=f"download_opex_doc_{i}"
+                        )
+                    else:
+                        st.info("No supporting document uploaded.")
+                
+                pdf_bytes = generate_opex_capex_pdf(req, st.session_state.user_profile)
+                st.download_button(
+                    label=f"Download Requisition {i+1} as PDF",
+                    data=pdf_bytes,
+                    file_name=f"Opex_Capex_Requisition_{i+1}_{req.get('submitted_date', 'N/A')}.pdf",
+                    mime="application/pdf",
+                    key=f"download_opex_pdf_{i}"
+                )
+                st.markdown("---")
+
+    if st.button("Back to Dashboard", key="back_from_view_opex_capex"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
+
+# --- Performance Goal Setting Page ---
+def performance_goal_setting():
+    st.title("Performance Goal Setting")
+    st.write("Define your performance goals for the upcoming appraisal period.")
+
+    with st.expander("Add New Performance Goal", expanded=True):
+        with st.form("new_goal_form"):
+            s_n_goals = st.text_area("S/N and Goals", help="State the goal clearly and concisely.")
+            weight_self_rating = st.slider("Weight (%) (Self-Rating)", 0, 100, 20, help="Assign a weight to this goal indicating its importance.")
+            
+            add_goal_button = st.form_submit_button("Add Goal")
+
+            if add_goal_button:
+                if s_n_goals and weight_self_rating >= 0:
+                    new_goal = {
+                        "s_n_goals": s_n_goals,
+                        "weight_self_rating": weight_self_rating,
+                        "status": "Not Started", # Initial status
+                        "self_appraisal_score": None, # Will be set during appraisal
+                        "employee_remark": "",
+                        "line_managers_rating": None, # Will be set by manager
+                        "supervisor_comment": ""
+                    }
+                    st.session_state.performance_goals.append(new_goal)
+                    save_data(st.session_state.performance_goals, "performance_goals.json")
+                    st.success("Performance goal added successfully!")
+                    st.rerun()
+                else:
+                    st.error("Please fill in the goal description and set a valid weight.")
 
     st.markdown("---")
-    st.markdown("#### Your Current Goals")
-    if user_goals:
-        goals_df = pd.DataFrame(user_goals)
-        st.dataframe(goals_df)
+    st.subheader("My Performance Goals")
 
-        # Allow editing/deleting
-        col_edit, col_delete = st.columns(2)
-        with col_edit:
-            goal_to_edit_id = st.selectbox("Select Goal ID to Edit", [g['id'] for g in user_goals], key="edit_select")
-        with col_delete:
-            goal_to_delete_id = st.selectbox("Select Goal ID to Delete", [g['id'] for g in user_goals], key="delete_select")
+    if not st.session_state.performance_goals:
+        st.info("You haven't set any performance goals yet.")
+    else:
+        # Display existing goals with edit/delete options
+        for i, goal in enumerate(st.session_state.performance_goals):
+            st.markdown(f"#### Goal {i+1}")
+            st.write(f"**Goal:** {goal.get('s_n_goals', 'N/A')}")
+            st.write(f"**Weight:** {goal.get('weight_self_rating', 0)}%")
+            st.write(f"**Status:** `{goal.get('status', 'N/A')}`")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(f"Edit Goal {i+1}", key=f"edit_goal_{i}"):
+                    st.session_state.edit_goal_index = i
+                    st.rerun()
+            with col2:
+                if st.button(f"Delete Goal {i+1}", key=f"delete_goal_{i}"):
+                    del st.session_state.performance_goals[i]
+                    save_data(st.session_state.performance_goals, "performance_goals.json")
+                    st.success(f"Goal {i+1} deleted.")
+                    st.session_state.edit_goal_index = None # Reset edit state if deleted
+                    st.rerun()
+            st.markdown("---")
 
-        if col_edit.button("Edit Selected Goal"):
-            st.session_state.edit_goal_index = next((i for i, g in enumerate(user_goals) if g['id'] == goal_to_edit_id), None)
-            if st.session_state.edit_goal_index is not None:
-                st.rerun()
-            else:
-                st.warning("Goal not found for editing.")
-
-        if col_delete.button("Delete Selected Goal"):
-            user_goals = [g for g in user_goals if g['id'] != goal_to_delete_id]
-            st.session_state.user_profile['performance_goals'] = user_goals # Update session state
-            update_user_data(st.session_state.user_profile) # Save updated user data
-            st.success(f"Goal {goal_to_delete_id} deleted.")
-            st.rerun()
-
+        # Edit form for selected goal
         if st.session_state.edit_goal_index is not None:
-            st.markdown("#### Edit Goal")
-            current_goal = user_goals[st.session_state.edit_goal_index]
+            edit_goal = st.session_state.performance_goals[st.session_state.edit_goal_index]
+            st.subheader(f"Editing Goal {st.session_state.edit_goal_index + 1}")
             with st.form("edit_goal_form"):
-                edited_title = st.text_input("Goal Title", value=current_goal['title'])
-                edited_description = st.text_area("Description", value=current_goal['description'])
-                edited_target_date = st.date_input("Target Completion Date", value=datetime.strptime(current_goal['target_date'], '%Y-%m-%d'))
-                edited_metric = st.text_input("Key Metric", value=current_goal['metric'])
-                edited_weight = st.slider("Weight (1-100%)", 1, 100, current_goal['weight'])
-                edited_status = st.selectbox("Status", ["Pending", "In Progress", "Completed", "Cancelled"], index=["Pending", "In Progress", "Completed", "Cancelled"].index(current_goal['status']))
-                edited_progress = st.slider("Progress (%)", 0, 100, current_goal['progress'])
+                edited_s_n_goals = st.text_area("S/N and Goals", value=edit_goal.get('s_n_goals', ''), key="edited_s_n_goals")
+                edited_weight_self_rating = st.slider("Weight (%)", 0, 100, edit_goal.get('weight_self_rating', 0), key="edited_weight_self_rating")
+                edited_status = st.selectbox("Status", ["Not Started", "In Progress", "On Hold", "Complete"], index=["Not Started", "In Progress", "On Hold", "Complete"].index(edit_goal.get('status', 'Not Started')), key="edited_status")
+                
+                update_goal_button = st.form_submit_button("Update Goal")
 
-                save_edit_button = st.form_submit_button("Save Changes")
+                if update_goal_button:
+                    st.session_state.performance_goals[st.session_state.edit_goal_index] = {
+                        "s_n_goals": edited_s_n_goals,
+                        "weight_self_rating": edited_weight_self_rating,
+                        "status": edited_status,
+                        "self_appraisal_score": edit_goal.get('self_appraisal_score'),
+                        "employee_remark": edit_goal.get('employee_remark'),
+                        "line_managers_rating": edit_goal.get('line_managers_rating'),
+                        "supervisor_comment": edit_goal.get('supervisor_comment')
+                    }
+                    save_data(st.session_state.performance_goals, "performance_goals.json")
+                    st.success("Goal updated successfully!")
+                    st.session_state.edit_goal_index = None # Exit edit mode
+                    st.rerun()
+                
+                if st.button("Cancel Edit", key="cancel_edit_goal"):
+                    st.session_state.edit_goal_index = None
+                    st.rerun()
 
-                if save_edit_button:
-                    if not edited_title or not edited_description or not edited_metric:
-                        st.error("Goal Title, Description, and Key Metric are required.")
-                    else:
-                        user_goals[st.session_state.edit_goal_index] = {
-                            "id": current_goal['id'],
-                            "title": edited_title,
-                            "description": edited_description,
-                            "target_date": str(edited_target_date),
-                            "metric": edited_metric,
-                            "weight": edited_weight,
-                            "status": edited_status,
-                            "progress": edited_progress
-                        }
-                        st.session_state.user_profile['performance_goals'] = user_goals # Update session state
-                        update_user_data(st.session_state.user_profile) # Save updated user data
-                        st.success(f"Goal {current_goal['id']} updated successfully!")
-                        st.session_state.edit_goal_index = None # Exit edit mode
-                        st.rerun()
-    else:
-        st.info("No goals set yet.")
+    if st.button("Back to Dashboard", key="back_from_goal_setting"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
 
-# --- Self Appraisal Functionality ---
-def self_appraisal():
-    st.subheader("Self-Appraisal Form")
-    user_appraisal = st.session_state.user_profile.get('current_appraisal', {}) # Get appraisal from logged-in user's data
-    user_goals = st.session_state.user_profile.get('performance_goals', []) # Get goals from logged-in user's data
+# --- Performance Appraisal Page ---
+def performance_appraisal_page():
+    st.title("My Performance Appraisal")
 
-    st.write(f"Appraisal for: **{st.session_state.user_profile.get('profile', {}).get('full_name', st.session_state.username)}** (ID: {st.session_state.user_profile.get('employee_id')})")
+    st.info("This section allows you to conduct your self-appraisal and view supervisor ratings.")
 
-    with st.form("self_appraisal_form"):
-        st.markdown("#### Performance Against Goals")
-        goal_scores = {}
-        for goal in user_goals:
-            st.markdown(f"**Goal:** {goal['title']} (Weight: {goal['weight']}%)")
-            st.write(f"Description: {goal['description']}")
-            st.write(f"Metric: {goal['metric']}")
-            score = st.slider(f"Self-Score for '{goal['title']}' (1-5)", 1, 5, value=user_appraisal.get(f"goal_score_{goal['id']}", 3), key=f"self_score_{goal['id']}")
-            comments = st.text_area(f"Self-Comments on '{goal['title']}'", value=user_appraisal.get(f"goal_comments_{goal['id']}", ""), key=f"self_comments_{goal['id']}")
-            goal_scores[f"goal_score_{goal['id']}"] = score
-            goal_scores[f"goal_comments_{goal['id']}"] = comments
+    # Initialize current appraisal if not already done, pulling from session state
+    if not st.session_state.current_appraisal.get("appraisal_period"):
+        st.session_state.current_appraisal["appraisal_period"] = f"Annual Appraisal {datetime.now().year}"
 
-        st.markdown("#### Overall Self-Assessment")
-        overall_strengths = st.text_area("Key Strengths", value=user_appraisal.get("overall_strengths", ""))
-        overall_improvements = st.text_area("Areas for Improvement", value=user_appraisal.get("overall_improvements", ""))
-        development_needs = st.text_area("Development Needs/Training Required", value=user_appraisal.get("development_needs", ""))
-        achievements = st.text_area("Key Achievements This Period", value=user_appraisal.get("achievements", ""))
+    st.subheader(f"Appraisal Period: {st.session_state.current_appraisal['appraisal_period']}")
+    
+    st.markdown("---")
+    st.subheader("Performance Goals Self-Appraisal")
 
-        submit_appraisal_button = st.form_submit_button("Submit Self-Appraisal")
-
-        if submit_appraisal_button:
-            # Calculate weighted score (simplified example)
-            total_weighted_score = 0
-            total_weight = sum(goal['weight'] for goal in user_goals)
-            if total_weight > 0:
-                for goal in user_goals:
-                    score = goal_scores.get(f"goal_score_{goal['id']}", 0)
-                    total_weighted_score += (score * goal['weight'])
-                overall_score = total_weighted_score / total_weight
-            else:
-                overall_score = 0 # No goals set
-
-            appraisal_data = {
-                "appraisal_date": datetime.now().strftime("%Y-%m-%d"),
-                "employee_id": st.session_state.user_profile.get('employee_id'),
-                "employee_name": st.session_state.user_profile.get('profile', {}).get('full_name', st.session_state.username),
-                "goals_assessment": goal_scores,
-                "overall_strengths": overall_strengths,
-                "overall_improvements": overall_improvements,
-                "development_needs": development_needs,
-                "achievements": achievements,
-                "overall_self_score": round(overall_score, 2),
-                "status": "Submitted by Employee", # Status for review by manager
-                "line_manager_comments": user_appraisal.get("line_manager_comments", ""),
-                "line_manager_score": user_appraisal.get("line_manager_score", 0)
-            }
-            st.session_state.user_profile['current_appraisal'] = appraisal_data # Update session state
-            update_user_data(st.session_state.user_profile) # Save updated user data
-            st.success("Self-Appraisal submitted successfully!")
+    if not st.session_state.performance_goals:
+        st.warning("You have no performance goals set. Please set goals first in the 'Performance Goal Setting' section.")
+        if st.button("Go to Goal Setting"):
+            st.session_state.current_page = "performance_goal_setting"
             st.rerun()
-    else:
-        st.info("Fill out the form above to submit your self-appraisal.")
-
-def line_manager_appraisal():
-    st.subheader("Line Manager Appraisal")
-
-    all_users = load_data(USERS_FILE, [])
-    # Filter users based on your role, e.g., managers appraise their direct reports
-    # For simplicity, Admin/HR/MD can appraise any employee here.
-    appraisable_employees = [user for user in all_users if user['role'] == "Employee"]
-
-    if not appraisable_employees:
-        st.info("No employees to appraise.")
         return
 
-    selected_employee_username = st.selectbox(
-        "Select Employee to Appraise",
-        [user['username'] for user in appraisable_employees]
-    )
+    # Create a form for self-appraisal
+    with st.form("self_appraisal_form"):
+        updated_goals_for_appraisal = []
+        for i, goal in enumerate(st.session_state.performance_goals):
+            st.markdown(f"#### Goal {i+1}: {goal.get('s_n_goals', 'N/A')} (Weight: {goal.get('weight_self_rating', 0)}%)")
+            
+            # Employee's self-appraisal score
+            self_score = st.slider(
+                f"Your Self-Appraisal Score (0-5) for Goal {i+1}",
+                0, 5, value=goal.get('self_appraisal_score', 0) or 0, key=f"self_score_{i}"
+            )
+            # Employee's remark
+            employee_remark = st.text_area(
+                f"Your Remark for Goal {i+1}",
+                value=goal.get('employee_remark', ''), key=f"employee_remark_{i}"
+            )
 
-    selected_employee_user = next((user for user in appraisable_employees if user['username'] == selected_employee_username), None)
+            # Display supervisor's rating and comment if available (read-only for employee)
+            st.write(f"**Supervisor's Score:** `{goal.get('line_managers_rating', 'N/A')}`")
+            st.write(f"**Supervisor's Comment:** `{goal.get('supervisor_comment', 'N/A')}`")
 
-    if selected_employee_user:
-        employee_appraisal = selected_employee_user.get('current_appraisal', {})
-        employee_goals = selected_employee_user.get('performance_goals', [])
-        employee_full_name = selected_employee_user.get('profile', {}).get('full_name', selected_employee_username)
+            # Update the goal dictionary for submission
+            updated_goal = goal.copy()
+            updated_goal['self_appraisal_score'] = self_score
+            updated_goal['employee_remark'] = employee_remark
+            updated_goals_for_appraisal.append(updated_goal)
+        
+        st.markdown("---")
+        st.subheader("Overall Feedback")
+        overall_supervisor_comment_placeholder = st.empty()
+        recommendation_placeholder = st.empty()
 
-        st.write(f"Appraising: **{employee_full_name}** (ID: {selected_employee_user.get('employee_id')})")
-        st.write(f"Last Self-Appraisal Date: {employee_appraisal.get('appraisal_date', 'N/A')}")
+        # Display overall supervisor comment and recommendation (read-only)
+        overall_supervisor_comment_placeholder.write(f"**Overall Supervisor's Comment:** `{st.session_state.current_appraisal.get('overall_supervisor_comment', 'N/A')}`")
+        recommendation_placeholder.write(f"**Recommendation:** `{st.session_state.current_appraisal.get('recommendation', 'N/A')}`")
 
-        with st.form(f"line_manager_appraisal_form_{selected_employee_username}"):
-            st.markdown("#### Employee's Self-Assessment (Read-Only)")
-            st.json(employee_appraisal) # Display employee's self-assessment as JSON for review
+        submit_appraisal = st.form_submit_button("Save Self-Appraisal")
 
-            st.markdown("#### Line Manager's Assessment")
-            manager_goal_scores = {}
-            for goal in employee_goals:
-                st.markdown(f"**Goal:** {goal['title']} (Weight: {goal['weight']}%)")
-                st.write(f"Employee's Self-Score: {employee_appraisal.get(f'goal_score_{goal['id']}', 'N/A')}")
-                st.write(f"Employee's Self-Comments: {employee_appraisal.get(f'goal_comments_{goal['id']}', 'N/A')}")
-                
-                score = st.slider(f"Manager's Score for '{goal['title']}' (1-5)", 1, 5, value=employee_appraisal.get(f"line_manager_goal_score_{goal['id']}", 3), key=f"manager_score_{selected_employee_username}_{goal['id']}")
-                comments = st.text_area(f"Manager's Comments on '{goal['title']}'", value=employee_appraisal.get(f"line_manager_goal_comments_{goal['id']}", ""), key=f"manager_comments_{selected_employee_username}_{goal['id']}")
-                manager_goal_scores[f"line_manager_goal_score_{goal['id']}"] = score
-                manager_goal_scores[f"line_manager_goal_comments_{goal['id']}"] = comments
+        if submit_appraisal:
+            st.session_state.performance_goals = updated_goals_for_appraisal # Update main goals list
+            save_data(st.session_state.performance_goals, "performance_goals.json")
+            
+            # Update current_appraisal structure for PDF generation
+            st.session_state.current_appraisal['goals'] = updated_goals_for_appraisal
+            save_data(st.session_state.current_appraisal, "current_appraisal.json") # Save full appraisal data
+            st.success("Your self-appraisal has been saved!")
+            st.rerun()
 
-            line_manager_overall_comments = st.text_area("Overall Line Manager Comments", value=employee_appraisal.get("line_manager_comments", ""))
-            line_manager_overall_score = st.slider("Overall Line Manager Score (1-5)", 1, 5, value=employee_appraisal.get("line_manager_score", 3))
+    # Calculate and display overall scores
+    if st.session_state.performance_goals:
+        total_weighted_self_score = 0
+        total_weighted_supervisor_score = 0
+        total_weight = sum(g.get('weight_self_rating', 0) for g in st.session_state.performance_goals)
 
-            submit_manager_appraisal_button = st.form_submit_button("Submit Manager Appraisal")
+        for goal in st.session_state.performance_goals:
+            weight = goal.get('weight_self_rating', 0)
+            self_score = goal.get('self_appraisal_score', 0) or 0
+            supervisor_score = goal.get('line_managers_rating', 0) or 0
 
-            if submit_manager_appraisal_button:
-                # Calculate weighted score (simplified example)
-                total_weighted_score = 0
-                total_weight = sum(goal['weight'] for goal in employee_goals)
-                if total_weight > 0:
-                    for goal in employee_goals:
-                        score = manager_goal_scores.get(f"line_manager_goal_score_{goal['id']}", 0)
-                        total_weighted_score += (score * goal['weight'])
-                    overall_manager_score = total_weighted_score / total_weight
-                else:
-                    overall_manager_score = 0 # No goals set
+            total_weighted_self_score += (weight / 100) * self_score
+            total_weighted_supervisor_score += (weight / 100) * supervisor_score
 
-                # Update the employee's appraisal data within their user object
-                employee_appraisal.update({
-                    "line_manager_comments": line_manager_overall_comments,
-                    "line_manager_score": line_manager_overall_score,
-                    "manager_appraisal_date": datetime.now().strftime("%Y-%m-%d"),
-                    "status": "Appraised by Manager",
-                    "manager_goal_assessments": manager_goal_scores,
-                    "overall_manager_weighted_score": round(overall_manager_score, 2)
-                })
+        st.markdown("---")
+        st.subheader("Appraisal Summary")
+        if total_weight > 0:
+            overall_self_score_0_5 = (total_weighted_self_score / total_weight) * 5
+            overall_supervisor_score_0_5 = (total_weighted_supervisor_score / total_weight) * 5 # Scale to 0-5
 
-                # Update the selected employee's user data in all_users list
-                selected_employee_user['current_appraisal'] = employee_appraisal
-                update_user_data(selected_employee_user) # Save updated user data
+            st.metric(label="Overall Self-Appraisal Score (0-5)", value=f"{overall_self_score_0_5:,.2f}")
+            st.metric(label="Overall Supervisor's Score (0-5)", value=f"{overall_supervisor_score_0_5:,.2f}")
+        else:
+            st.info("No weighted goals to calculate overall scores.")
 
-                st.success(f"Appraisal for {employee_full_name} submitted successfully!")
-                st.rerun()
-    else:
-        st.info("Select an employee to view/submit their appraisal.")
+    # PDF Download Button
+    if st.session_state.current_appraisal.get('goals'): # Only allow download if there are goals saved
+        pdf_bytes = generate_appraisal_pdf(st.session_state.current_appraisal, st.session_state.user_profile)
+        st.download_button(
+            label="Download My Performance Appraisal as PDF",
+            data=pdf_bytes,
+            file_name=f"Performance_Appraisal_{st.session_state.user_profile.get('name', 'Employee')}_{datetime.now().year}.pdf",
+            mime="application/pdf",
+            key="download_appraisal_pdf"
+        )
 
-def download_appraisal_pdf():
-    st.subheader("Download Appraisal PDF")
-    
-    all_users = load_data(USERS_FILE, [])
-    # Filter users based on your role, e.g., managers can download for their reports
-    downloadable_employees = [user for user in all_users if user['role'] == "Employee"] # Assuming managers can download for employees
-
-    selected_employee_username = st.selectbox(
-        "Select Employee to Download Appraisal",
-        [user['username'] for user in downloadable_employees]
-    )
-
-    selected_employee_user = next((user for user in downloadable_employees if user['username'] == selected_employee_username), None)
-
-    if selected_employee_user and selected_employee_user.get('current_appraisal'):
-        employee_appraisal = selected_employee_user['current_appraisal']
-        employee_profile = selected_employee_user['profile']
-        employee_goals = selected_employee_user['performance_goals']
-
-        st.write(f"Generating PDF for {employee_profile.get('full_name', selected_employee_username)}")
-
-        if st.button("Generate PDF"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size=12)
-
-            pdf.cell(200, 10, txt="Performance Appraisal Report", ln=True, align="C")
-            pdf.ln(10)
-
-            pdf.set_font("Arial", style='B', size=10)
-            pdf.cell(0, 10, "Employee Information:", ln=True)
-            pdf.set_font("Arial", size=10)
-            pdf.cell(0, 5, f"Full Name: {employee_profile.get('full_name', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Employee ID: {employee_profile.get('employee_id', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Department: {employee_profile.get('department', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Position: {employee_profile.get('position', 'N/A')}", ln=True)
-            pdf.ln(5)
-
-            pdf.set_font("Arial", style='B', size=10)
-            pdf.cell(0, 10, "Appraisal Details:", ln=True)
-            pdf.set_font("Arial", size=10)
-            pdf.cell(0, 5, f"Appraisal Date: {employee_appraisal.get('appraisal_date', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Manager Appraisal Date: {employee_appraisal.get('manager_appraisal_date', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Status: {employee_appraisal.get('status', 'N/A')}", ln=True)
-            pdf.ln(5)
-
-            pdf.set_font("Arial", style='B', size=10)
-            pdf.cell(0, 10, "Performance Goals Assessment:", ln=True)
-            pdf.set_font("Arial", size=10)
-            for goal in employee_goals:
-                pdf.cell(0, 5, f"Goal: {goal['title']}", ln=True)
-                pdf.cell(0, 5, f" - Description: {goal['description']}", ln=True)
-                pdf.cell(0, 5, f" - Employee Self-Score: {employee_appraisal.get(f'goal_score_{goal['id']}', 'N/A')}", ln=True)
-                pdf.multi_cell(0, 5, f" - Employee Comments: {employee_appraisal.get(f'goal_comments_{goal['id']}', 'N/A')}")
-                pdf.cell(0, 5, f" - Manager Score: {employee_appraisal.get(f'line_manager_goal_score_{goal['id']}', 'N/A')}", ln=True)
-                pdf.multi_cell(0, 5, f" - Manager Comments: {employee_appraisal.get(f'line_manager_goal_comments_{goal['id']}', 'N/A')}")
-                pdf.ln(2)
-
-            pdf.set_font("Arial", style='B', size=10)
-            pdf.cell(0, 10, "Overall Assessment:", ln=True)
-            pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 5, f"Key Strengths: {employee_appraisal.get('overall_strengths', 'N/A')}")
-            pdf.multi_cell(0, 5, f"Areas for Improvement: {employee_appraisal.get('overall_improvements', 'N/A')}")
-            pdf.multi_cell(0, 5, f"Development Needs: {employee_appraisal.get('development_needs', 'N/A')}")
-            pdf.multi_cell(0, 5, f"Key Achievements: {employee_appraisal.get('achievements', 'N/A')}")
-            pdf.cell(0, 5, f"Overall Self-Score: {employee_appraisal.get('overall_self_score', 'N/A')}", ln=True)
-            pdf.cell(0, 5, f"Overall Manager Score: {employee_appraisal.get('line_manager_score', 'N/A')}", ln=True)
-            pdf.multi_cell(0, 5, f"Overall Manager Comments: {employee_appraisal.get('line_manager_comments', 'N/A')}")
-
-            pdf_output = pdf.output(dest='S').encode('latin-1')
-            b64 = base64.b64encode(pdf_output).decode('latin-1')
-            download_link = f'<a href="data:application/pdf;base64,{b64}" download="Appraisal_Report_{employee_profile.get("employee_id", "N/A")}.pdf">Download PDF Report</a>'
-            st.markdown(download_link, unsafe_allow_html=True)
-    elif selected_employee_user:
-        st.info(f"No appraisal data available for {selected_employee_username}.")
-    else:
-        st.info("Select an employee to download their appraisal.")
+    if st.button("Back to Dashboard", key="back_from_appraisal"):
+        st.session_state.current_page = "dashboard"
+        st.rerun()
 
 
 # --- Main Application Logic ---
-
 def main():
-    st.set_page_config(page_title="Polaris Digitech HR System", layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(
+        page_title="Polaris Digitech Staff Portal",
+        page_icon=":briefcase:", # Use an appropriate icon
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
 
-    # Initialize session state variables
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "username" not in st.session_state:
-        st.session_state.username = ""
-    if "role" not in st.session_state:
-        st.session_state.role = ""
-    if "current_page" not in st.session_state:
-        st.session_state.current_page = "login"
-    if "user_profile" not in st.session_state:
-        st.session_state.user_profile = {} # Store the full user object here
-
-    # New: Call this once at the very beginning to ensure users.json exists
-    initialize_users_data()
+    # Custom CSS for Font Awesome icons and general styling
+    st.markdown("""
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            .st-emotion-cache-1jm9LEf { /* Adjust sidebar width */
+                width: 250px;
+            }
+            .sidebar .sidebar-content {
+                padding-top: 20px;
+            }
+            .sidebar .stButton>button {
+                width: 100%;
+                text-align: left;
+                padding-left: 20px;
+            }
+            .st-emotion-cache-v01q57 a { /* For the links generated by st.link_button */
+                width: 100%;
+                text-align: center;
+                padding-left: 20px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                background-color: #f0f2f6;
+                color: #000;
+                border-radius: 0.5rem;
+                padding: 0.46875rem 0.8125rem;
+                line-height: 1.7;
+            }
+            .st-emotion-cache-v01q57 a:hover {
+                background-color: #e0e2e6;
+            }
+        </style>
+        """, unsafe_allow_html=True)
 
     if not st.session_state.logged_in:
-        login_page()
+        login_form()
     else:
         # Sidebar for navigation
-        st.sidebar.image(LOGO_PATH, width=200)
-        st.sidebar.title("Navigation")
-        st.sidebar.markdown(f"**Welcome, {st.session_state.username}!**")
-        st.sidebar.markdown(f"Role: **{st.session_state.role}**")
-        st.sidebar.markdown("---")
-
-        menu_items = {
-            "Employee": ["Dashboard", "My Profile", "Leave Request", "My Leave Applications", "OPEX/CAPEX Request", "My OPEX/CAPEX Applications", "Performance Goal Setting", "Self-Appraisal"],
-            "HR Manager": ["Dashboard", "My Profile", "View Leave Applications", "Performance Goal Setting", "Self-Appraisal", "Line Manager Appraisal", "Download Appraisal PDF"],
-            "Finance Manager": ["Dashboard", "My Profile", "View OPEX/CAPEX Applications"],
-            "Admin Manager": ["Dashboard", "My Profile", "View Leave Applications", "View OPEX/CAPEX Applications", "Performance Goal Setting", "Self-Appraisal", "Line Manager Appraisal", "Download Appraisal PDF"],
-            "Managing Director": ["Dashboard", "My Profile", "View Leave Applications", "View OPEX/CAPEX Applications", "Line Manager Appraisal", "Download Appraisal PDF"]
-        }
-
-        # Filter menu items based on user role
-        role_specific_menu = menu_items.get(st.session_state.role, ["Dashboard"])
-
-        for item in role_specific_menu:
-            if st.sidebar.button(item):
-                # Map button text to internal page state
-                if item == "Dashboard": st.session_state.current_page = "dashboard"
-                elif item == "My Profile": st.session_state.current_page = "my_profile"
-                elif item == "Leave Request": st.session_state.current_page = "leave_request"
-                elif item == "My Leave Applications": st.session_state.current_page = "view_leave_applications"
-                elif item == "View Leave Applications": st.session_state.current_page = "view_leave_applications" # Managers
-                elif item == "OPEX/CAPEX Request": st.session_state.current_page = "opex_capex_form"
-                elif item == "My OPEX/CAPEX Applications": st.session_state.current_page = "view_opex_capex_applications"
-                elif item == "View OPEX/CAPEX Applications": st.session_state.current_page = "view_opex_capex_applications" # Managers
-                elif item == "Performance Goal Setting": st.session_state.current_page = "performance_goal_setting"
-                elif item == "Self-Appraisal": st.session_state.current_page = "self_appraisal"
-                elif item == "Line Manager Appraisal": st.session_state.current_page = "line_manager_appraisal"
-                elif item == "Download Appraisal PDF": st.session_state.current_page = "download_appraisal_pdf"
+        with st.sidebar:
+            st.markdown(f"### Welcome, {st.session_state.username.split()[0]}!")
+            st.write("---")
+            
+            # Use columns for icon and text for better alignment
+            if st.button("🏠 Dashboard", key="nav_dashboard"):
+                st.session_state.current_page = "dashboard"
+                st.rerun()
+            if st.button("🗓️ Leave Request", key="nav_leave_request"):
+                st.session_state.current_page = "leave_request"
+                st.rerun()
+            if st.button("📄 View Leave Applications", key="nav_view_leave"):
+                st.session_state.current_page = "view_leave_applications"
+                st.rerun()
+            if st.button("💰 Opex/Capex Requisition", key="nav_opex_capex"):
+                st.session_state.current_page = "opex_capex_form"
+                st.rerun()
+            if st.button("📈 View Opex/Capex", key="nav_view_opex_capex"):
+                st.session_state.current_page = "view_opex_capex_applications"
+                st.rerun()
+            if st.button("🎯 Performance Goal Setting", key="nav_goal_setting"):
+                st.session_state.current_page = "performance_goal_setting"
+                st.rerun()
+            if st.button("📊 My Performance Appraisal", key="nav_appraisal"):
+                st.session_state.current_page = "performance_appraisal_page"
+                st.rerun()
+            
+            st.write("---")
+            if st.button("Logout"):
+                st.session_state.logged_in = False
+                st.session_state.username = ""
+                st.session_state.current_page = "login"
+                st.session_state.leave_requests = load_data("leave_requests.json", [])
+                st.session_state.opex_capex_requests = load_data("opex_capex_requests.json", [])
+                st.session_state.user_profile = load_data("user_profile.json", default_profile)
+                st.session_state.performance_goals = load_data("performance_goals.json", [])
+                st.session_state.edit_goal_index = None
+                # Also reset appraisal data if you want it fresh on logout
+                if os.path.exists("current_appraisal.json"):
+                    os.remove("current_appraisal.json") 
                 st.rerun()
 
-        st.sidebar.markdown("---")
-        if st.sidebar.button("Logout"):
-            st.session_state.logged_in = False
-            st.session_state.username = ""
-            st.session_state.role = ""
-            st.session_state.current_page = "login"
-            st.session_state.user_profile = {} # Clear user-specific data on logout
-            st.session_state.edit_goal_index = None
-            st.rerun()
-
-        # Display the selected page content
         if st.session_state.current_page == "dashboard":
             display_dashboard()
-        elif st.session_state.current_page == "my_profile":
-            display_profile_management()
         elif st.session_state.current_page == "leave_request":
             leave_request_form()
         elif st.session_state.current_page == "view_leave_applications":
@@ -1123,12 +1160,8 @@ def main():
             view_opex_capex_applications()
         elif st.session_state.current_page == "performance_goal_setting":
             performance_goal_setting()
-        elif st.session_state.current_page == "self_appraisal":
-            self_appraisal()
-        elif st.session_state.current_page == "line_manager_appraisal":
-            line_manager_appraisal()
-        elif st.session_state.current_page == "download_appraisal_pdf":
-            download_appraisal_pdf()
+        elif st.session_state.current_page == "performance_appraisal_page":
+            performance_appraisal_page()
 
 if __name__ == "__main__":
     main()
