@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import os
 import pandas as pd
 import plotly.express as px
-from fpdf import FPDF 
+from fpdf import as FPDF 
 import base64
 
 # --- Configuration & Paths ---
