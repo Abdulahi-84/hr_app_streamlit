@@ -861,23 +861,9 @@ def self_appraisal():
             else:
                 overall_score = 0 # No goals set
 
-            appraisal_data = {
-                "appraisal_date": datetime.now().strftime("%Y-%m-%d"),
-                "employee_id": st.session_state.user_profile.get('employee_id'),
-                "employee_name": st.session_state.user_profile.get('profile', {}).get('full_name', st.session_state.username),
-                "goals_assessment": goal_scores,
-                "overall_strengths": overall_strengths,
-                "overall_improvements": overall_improvements,
-                "development_needs": development_needs,
-                "achievements": achievements,
-                "overall_self_score": round(overall_score, 2),
-                "status": "Submitted by Employee", # Status for review by manager
-                "line_manager_comments": user_appraisal.get("line_manager_comments", ""),
-                "line_manager_score": user_appraisal.get("line_manager_score", 0)
-            }
-            st.session_state.user_profile['current_appraisal'] = appraisal_data # Update session state
-            update_user_data(st.session_state.user_profile) # Save updated user data
-            st.success("Self-Appraisal submitted successfully!")
+            else:
+        st.info("Fill out the form above to submit your self-appraisal.")
+d successfully!")
             st.rerun()
     else:
         st.info("Fill out the form above to submit your self-appraisal.")
