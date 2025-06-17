@@ -1,5 +1,5 @@
 streamlit
 pandas
-plotly-express
+plotly
 fpdf
-bcrypt
+passlib
