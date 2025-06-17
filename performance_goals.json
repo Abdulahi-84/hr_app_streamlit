@@ -1,0 +1,16 @@
+[
+    {
+        "goal_id": 1,
+        "staff_id": "N/A",
+        "staff_name": "Abdulahi Ibrahim",
+        "title": "Cost-Optimization",
+        "description": "Ensure zero wastage of office consumables",
+        "due_date": "2025-09-30",
+        "status": "Not Started",
+        "set_date": "2025-06-13",
+        "user_id": "c2fec014-9fbc-4583-9954-fc75777ad565",
+        "line_manager_id": null,
+        "line_manager_approval": "Pending",
+        "comments": ""
+    }
+]
